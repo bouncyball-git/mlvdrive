@@ -22,10 +22,14 @@ caching and web GUI are all replaced. **Windows first** (WinFsp); Linux (FUSE 3)
   **copied in** (once, at the start), never referenced by path at build time. After copying,
   the code, comments, README and build don't mention the projects it was copied from, except
   the required credits below.
+- **Where code comes from, in this order:** mlvtoolbox (`D:\devel\mlvtoolbox`, the most
+  finished C++ versions), then MLV-App (`D:\devel\MLV-App`), then MLV-OFX. **MLVFS only when none
+  of them has the code needed**; otherwise it is a reference for behaviour (naming, what Resolve
+  accepts).
 - **Credits** (GPL): MLV-App (`third_party/mlvapp`, as its README there says) and MLVFS for
-  anything ported from it (dual ISO, DNG tag choices): keep their copyright notices in ported
-  files and name MLVFS in the README ("inspired by and partly ported from MLVFS by David
-  Milligan").
+  anything derived from it (MLV-App's DNG writer started as MLVFS's): keep their copyright
+  notices in derived files and name MLVFS in the README ("inspired by and partly derived from
+  MLVFS by David Milligan").
 - Licence: GPL-3.0 (compatible with MLV-App GPL-3.0 and MLVFS GPL-2.0-or-later).
 - C++17, CMake + Ninja, MSVC (Visual Studio 2022 Build Tools are installed at
   `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`), static runtime
@@ -49,17 +53,20 @@ From `D:\devel\MLV-OFX` (tested; decodes the test clip correctly):
 Engine speeds measured there (5D Mark III 1080p 14-bit LJ92, 8 threads): decode + raw corrections
 + a bilinear debayer = 22 ms a frame, so decode + corrections alone are below that.
 
-From `D:\devel\MLVFS\mlvfs` (read, port what is needed; don't copy the whole tree):
+From `D:\devel\mlvtoolbox` (its `mlv/`, `raw/`, `util/` are the same as the ones above, byte for
+byte):
 
-| File | Use |
-|---|---|
-| `dng.c`, `dng_tag_*.h` | the DNG tag set that works in Resolve (Make/Model, CFA pattern, black/white levels, ColorMatrix1/2, AsShotNeutral, BaselineExposure, frame rate, timecode, ActiveArea/crop). Rewrite as `src/dng/` in C++ |
-| `main.c` `get_mlv_basename`, `mlvfs_readdir` | Resolve naming: `<name>_%06d.dng` per frame, `<name>.wav` beside them; the optional BMD-style name `<name>_1_YYYY-MM-DD_0001_C0000` |
-| `wav.c` | WAV header (with BWF timecode if it has one) |
-| `hdr.c` (+ `amaze_demosaic_RT.c`, `cs.c`, `histogram.c`) | dual ISO (milestone 6) |
-| `main.c` `deflicker`, `patternnoise.c` | optional extras, later |
+| From | To | What it is |
+|---|---|---|
+| `src/dng/dng_writer.{h,cpp}` | `src/dng/` | **copied (milestone 2)**: MLV-App's DNG tag set in C++ (matrices, as-shot neutral, timecode, frame rate, reel name, pixel aspect, EXIF), packed / LJ92 / pass-through output. Added here: 16-bit output, the whole DNG in memory, sizes known per clip |
+| `src/mlv/wav.{h,cpp}` | `src/mlv/` | Broadcast WAVE with bext/iXML (milestone 5) |
 
-Not taken: Pismo/Dokan/FUSE code, mongoose web server, jQuery, LZMA, GIF previews, `index.c`.
+From `D:\devel\MLV-App`: `src/mlv/llrawproc/dualiso.c` for dual ISO (milestone 6); `darkframe.c`,
+`patternnoise.c` as optional extras.
+
+From `D:\devel\MLVFS\mlvfs`: a reference only (see the order above). Behaviour to match: the
+names Resolve groups, from `main.c`: `<name>_%06d.dng` per frame, `<name>.wav` beside them; the
+optional BMD-style name `<name>_1_YYYY-MM-DD_0001_C0000`.
 
 ## Architecture
 
@@ -91,14 +98,16 @@ mlvdrive.exe  (console app; later a tray app)
 ## DNG output
 
 The size of every file must be known when Explorer or Resolve lists the folder, before the frame
-is generated:
+is generated. The header is the same size for every frame of a clip (1200 bytes for the test
+clip: every value that changes per frame has a fixed size), so a file is header + image.
 
 1. **Uncompressed 16-bit** (MLVFS's format): size = header + w × h × 2, fixed. Works in Resolve
    (MLVFS proves it). About 4.1 MB a 1080p frame, ~100 MB/s at 24 fps through the filesystem.
-   **Start with this.**
+   **Start with this.** The frame is decoded and corrected straight into the file's buffer.
 2. **Uncompressed, bit-packed at the clip's depth** (14/12/10-bit): fixed size, 12-37% less data.
-   Test whether Resolve reads packed CinemaDNG.
-3. **Lossless JPEG (compression 7)**: ~half the data, but the size varies per frame. Options:
+   Written already (`--dng=packed`); test whether Resolve reads packed CinemaDNG.
+3. **Lossless JPEG (compression 7)**: ~half the data, but the size varies per frame. Written
+   already (`--dng=lj92`; `--dng=pass` is the recorded LJ92 as it is, without corrections). Options:
    report a per-clip upper bound and pad after the image (StripByteCounts gives the real length;
    check Resolve only reads that), or generate on first listing (too slow). Research item:
    measure whether Resolve's decode time for LJ92 DNG outweighs the I/O saved. Our fast LJ92
@@ -120,12 +129,15 @@ in Resolve.
    one frame decodes in ~8-11 ms, corrections ~4-6 ms.
    - Note: focus/bad pixel maps (`.fpm`) are opened with `fopen` from the current folder
      until `pixelproc_open_map` is set (not needed for the 5D Mark III).
-2. **DNG writer + CLI**:
-   - `mlvdrive_cli dng <clip> <frame> out.dng` (uncompressed 16-bit, raw corrections on).
-   - Check: open the DNG in Resolve (import the file directly) and in another raw app;
-     colour and orientation right; `mlvdrive_cli info` and `bench` (ms a frame for decode,
-     corrections, DNG).
-   - Read MLVFS `dng.c` for the tag set first.
+2. **DNG writer + CLI** (done but for the Resolve check):
+   - `src/dng/dng_writer` from mlvtoolbox, plus 16-bit output and rendering into memory.
+   - `mlvdrive_cli info | dng | check | bench`, `--dng=16|packed|lj92|pass`, `--no-fix`.
+   - Checked: `check` reads every format back equal to the decoded + corrected frame (and finds
+     the difference against an uncorrected one); exiftool validates all four; LibRaw (rawpy)
+     develops them identically, right way up, natural colour.
+   - Test clip, one thread: decode 8.3 ms + corrections 3.9 ms, whole 16-bit DNG 12.3 ms;
+     8 threads: 400 frames/s 16-bit (17x real time), 267 packed, 186 LJ92, 1420 pass-through.
+   - **To do:** import a DNG (and the sequence) in Resolve: colour, orientation, raw controls.
 3. **WinFsp mount, read-only, no cache**:
    - `mlvdrive mount E:\mlv M:`: folders, DNG names, sizes, timestamps from the clip's
      date; reads generate the frame.
@@ -134,9 +146,10 @@ in Resolve.
 4. **Speed**: per-handle frame, LRU cache, read-ahead, WinFsp tuning.
    - Measure: frames/s reading a mounted sequence (a CLI reader, then Resolve playback).
    - Target: real-time 1080p24 with corrections, and as close as possible at UHD.
-5. **Audio + timecode**: `<name>.wav` (BWF with the clip's timecode), DNG TimeCodes tag, so
-   Resolve syncs audio automatically.
-6. **Dual ISO** (port from MLVFS `hdr.c`), then packed / LJ92 DNG (see above).
+5. **Audio + timecode**: `<name>.wav` (BWF with the clip's timecode, mlvtoolbox `wav.cpp`),
+   DNG TimeCodes as time of day (the writer has it: `Timecode::TimeOfDay`), so Resolve syncs
+   audio automatically.
+6. **Dual ISO** (MLV-App `dualiso.c`), then packed / LJ92 DNG on the drive (see above).
 7. **Usability**:
    - Install script (copy exe, Start Menu shortcut).
    - Settings: command line + `mlvdrive.ini` (raw corrections, chroma smoothing, bad

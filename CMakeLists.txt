@@ -28,13 +28,15 @@ else()
     target_link_libraries(mlvapp_c PRIVATE m)
 endif()
 
-# --- MLV reading and decoding, raw corrections, white balance and camera matrices, thread pool ---
+# --- MLV reading and decoding, raw corrections, white balance and camera matrices, thread pool,
+#     DNG writer ---
 add_library(mlv_core STATIC
     src/util/file.cpp
     src/mlv/clip.cpp
     src/mlv/color.cpp
     src/raw/rawfix.cpp
-    src/parallel.cpp)
+    src/parallel.cpp
+    src/dng/dng_writer.cpp)
 target_include_directories(mlv_core PUBLIC src)
 find_package(Threads REQUIRED)
 target_link_libraries(mlv_core PUBLIC mlvapp_c Threads::Threads)
