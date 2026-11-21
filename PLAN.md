@@ -264,6 +264,19 @@ questions below (packed / LJ92 DNG, naming, write access).
 
 - Test clip: `E:\mlv\M21-1642.MLV`: Canon 5D Mark III, 1920×1080, 14-bit lossless (LJ92),
   261 frames at 23.976 fps, ISO 800, WB 5000 K, stereo audio. Machine: 8 logical CPUs.
+- Test set `G:\mlv` (SATA SSD; 52 clips, ~70 GB, in subfolders), all 14-bit 23.976 fps:
+  5D Mark III 1080p LJ92 1:1 (RAWC, audio) x5; 5D Mark III 3072x1728 LJ92 1:1 x2;
+  5D Mark III 1080p uncompressed without RAWC x20 (one spanned: `M05-1137.MLV` + `.M00`, 1379
+  frames; some with audio); Canon 60D 1280x544 uncompressed without RAWC x25.
+  Checked (after milestone 7): every clip opens and decodes (`info`); `selftest` (every frame:
+  decoders, vector vs scalar fixes, audio by range) passes on one clip of each kind and the
+  spanned one; geometry right without RAWC (60D square pixels, 2.35:1 frame; 1:1 crop focal
+  plane values); LibRaw develops each kind correctly; the whole folder mounts in 236 ms (75 GB
+  of DNG, subfolders and WAVs as expected) and every clip's middle frame read from the drive
+  equals a fresh decode + fixes. Reading in order through the drive: 3K LJ92 72.6 frames/s,
+  1080p LJ92 119, 1080p uncompressed 98 (cold, ~350 MB/s from the SSD) to 126, 60D 164: all
+  3x to 7x real time. No bugs found. (`M05-1137.fpm` beside its clip is not used: bad-pixel
+  fixing is off by default and maps are looked up by camera, not by clip name.)
 - Correctness: the image data in a generated DNG must equal the decoded + corrected raw frame
   (a CLI check that reads the DNG back); the DNG must open in Resolve and another raw app.
 - Speed: `mlvdrive_cli bench` (per-stage ms), and a mounted-read benchmark (MB/s and frames/s
