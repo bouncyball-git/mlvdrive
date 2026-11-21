@@ -7,6 +7,9 @@
 // pass), then finds its start still made instead of nothing (plain LRU drops each frame just
 // before it is needed). Frames made ahead and not read yet are kept.
 //
+// Frames are keyed by the clip's id (never reused, also when the drive's tree is rebuilt), so a
+// clip that changed or went away can't be mistaken for another; forget() lets its frames go.
+//
 // A frame asked for while it is being made (by read-ahead or another reader) is waited for, not
 // made twice. Read-ahead: reading frame N just after N-1 (reads going forward) queues N+1 ...
 // N+depth of its clip; a read far from the last one (a jump) drops what was queued for that clip
@@ -41,7 +44,10 @@ public:
 
     // The whole DNG of a frame: from the cache, or made now. Null (with `error`) if it can't be.
     // `readAhead` queues the frames after it.
-    FrameData get(const ClipEntry& clip, uint32_t frame, bool readAhead, std::string* error);
+    FrameData get(const std::shared_ptr<const ClipEntry>& clip, uint32_t frame, bool readAhead, std::string* error);
+
+    // Drops a clip's frames and what is queued for it (it changed, or left the drive).
+    void forget(uint64_t clipId);
 
     struct Stats {
         uint64_t hits = 0;          // found made
@@ -56,9 +62,13 @@ public:
 
 private:
     struct Key {
-        const ClipEntry* clip;
+        uint64_t clip;  // ClipEntry::id
         uint32_t frame;
         bool operator<(const Key& o) const { return clip != o.clip ? clip < o.clip : frame < o.frame; }
+    };
+    struct Job {
+        std::shared_ptr<const ClipEntry> clip;  // kept while queued
+        uint32_t frame;
     };
     struct Entry {
         FrameData data;              // null while being made
@@ -75,7 +85,7 @@ private:
     FrameData make(const ClipEntry& clip, uint32_t frame, std::string* error);
     void finish(const Key& key, FrameData data, const std::string& error, bool ahead);
     bool noteRead(const ClipEntry& clip, uint32_t frame);    // under mutex_: true if going forward
-    void queueAhead(const ClipEntry& clip, uint32_t frame);  // under mutex_
+    void queueAhead(const std::shared_ptr<const ClipEntry>& clip, uint32_t frame);  // under mutex_
     void evict(const Key& added);                            // under mutex_
     void worker();
 
@@ -88,8 +98,8 @@ private:
     std::list<Key> lru_;              // made entries, most recent first
     uint64_t bytes_ = 0;
     uint64_t seq_ = 0;
-    std::deque<Key> queue_;           // read-ahead jobs
-    std::map<const ClipEntry*, ClipState> clips_;
+    std::deque<Job> queue_;           // read-ahead jobs
+    std::map<uint64_t, ClipState> clips_;  // by ClipEntry::id
     Stats stats_;
     bool stopping_ = false;
     std::vector<std::thread> workers_;

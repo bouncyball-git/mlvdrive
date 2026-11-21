@@ -6,6 +6,7 @@
 //   drive = M:                 ; empty: the next free letter from Z: down
 //   test_patterns = false      ; add the TestPatterns folder
 //   mount_at_start = true      ; the tray app mounts when it starts
+//   watch = true               ; show clips added, removed or changed in the folders as it happens
 //   [dng]
 //   format = 16                ; 16 (16-bit) or packed (to the clip's bit depth)
 //   raw_fixes = true           ; raw corrections at all (stripes, focus and bad pixels)
@@ -33,6 +34,7 @@ struct Settings {
     std::wstring drive = L"M:";
     bool testPatterns = false;
     bool mountAtStart = true;
+    bool watch = true;
     dng::Output format = dng::Output::Uncompressed16;  // Uncompressed16 or Uncompressed (packed)
     bool rawFixes = true;
     int focusPixels = -1;  // -1 auto, 0 off, 1 on

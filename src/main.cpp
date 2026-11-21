@@ -2,6 +2,7 @@
 //
 //   mlvdrive mount [MLV folder ...] [M:] [options]
 //   mlvdrive unmount <M:>
+//   mlvdrive rescan <M:>
 //
 // mount takes its defaults from the settings file (app/settings.h; the tray app writes it) and
 // runs until Ctrl+C, the console is closed or `mlvdrive unmount` is run, then unmounts.
@@ -31,6 +32,7 @@ int usage() {
                  "MLV Drive " MLVDRIVE_VERSION ": MLV clips as a drive of CinemaDNG sequences\n"
                  "usage: mlvdrive mount [MLV folder ...] [M:] [options]\n"
                  "       mlvdrive unmount <M:>\n"
+                 "       mlvdrive rescan <M:>      (looks at the folders again now)\n"
                  "  Shows every MLV clip under the folders (merged) as a folder of DNG files. The folders,\n"
                  "  the drive letter and the options default to the settings file:\n"
                  "    %s\n"
@@ -47,6 +49,7 @@ int usage() {
                  "  --test-patterns  add a TestPatterns folder: 12 test charts (colour bars, PLUGE, grey\n"
                  "                   scale, crosshatch, safe areas, zone plate...), 5 s each, 1080p25; the\n"
                  "                   MLV folder may then be left out\n"
+                 "  --no-watch       don't watch the folders (new clips show after `mlvdrive rescan`)\n"
                  "  --cache=MB       finished frames kept in memory (auto: a quarter of the RAM, 512 MB\n"
                  "                   to 16 GB; the default)\n"
                  "  --read-ahead=N   frames made ahead of the one read (default: one per CPU; 0: none)\n"
@@ -78,6 +81,18 @@ int wmain(int argc, wchar_t** argv) {
         SetEvent(e);
         CloseHandle(e);
         std::printf("unmounting %s\n", app::narrow(at).c_str());
+        return 0;
+    }
+    if (argc == 3 && std::wstring(argv[1]) == L"rescan") {
+        const std::wstring at = app::normalizeDrive(argv[2]);
+        HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, app::rescanEventName(at).c_str());
+        if (!e) {
+            std::fprintf(stderr, "nothing mounted on %s by MLV Drive\n", app::narrow(at).c_str());
+            return 1;
+        }
+        SetEvent(e);
+        CloseHandle(e);
+        std::printf("rescanning %s\n", app::narrow(at).c_str());
         return 0;
     }
     if (argc < 2 || std::wstring(argv[1]) != L"mount") return usage();
@@ -118,6 +133,8 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--timecode=time") s.timecode = dng::Timecode::TimeOfDay;
         else if (a == L"--timecode=count") s.timecode = dng::Timecode::FrameCount;
         else if (a == L"--test-patterns") s.testPatterns = true;
+        else if (a == L"--no-watch") s.watch = false;
+        else if (a == L"--watch") s.watch = true;
         else if (a == L"--debug") debug = true;
         else if (a.rfind(L"--", 0) == 0) return usage();
         else positional.push_back(a);
@@ -135,19 +152,26 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     app::Mounter mounter;
+    mounter.onRescan([](const app::RescanResult& r) {
+        if (!r.added && !r.removed && !r.changed && r.skipped.empty()) return;
+        std::printf("rescanned: %zu clip%s added, %zu removed, %zu changed; %zu clips (%.1f GB)\n", r.added,
+                    r.added == 1 ? "" : "s", r.removed, r.changed, r.info.clips, r.info.bytes / 1e9);
+        for (const auto& m : r.skipped) std::printf("  %s\n", m.c_str());
+        std::fflush(stdout);
+    });
     std::string error;
     if (!mounter.mount(s, debug, [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); }, &error)) {
         std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-    const app::MountInfo& info = mounter.info();
+    const app::MountInfo info = mounter.info();
     std::string what;
     for (const auto& f : s.folders) what += (what.empty() ? "" : ", ") + app::narrow(f);
     if (what.empty()) what = "test patterns";
     std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", what.c_str(), info.clips,
                 info.clips == 1 ? "" : "s", info.bytes / 1e9, info.openMs);
-    std::printf("Mounted on %s (cache %u MB, read-ahead %u). Ctrl+C unmounts.\n", app::narrow(info.mountPoint).c_str(),
-                info.cacheMb, info.readAhead);
+    std::printf("Mounted on %s (cache %u MB, read-ahead %u%s). Ctrl+C unmounts.\n", app::narrow(info.mountPoint).c_str(),
+                info.cacheMb, info.readAhead, s.watch ? ", watching the folders" : "");
     std::fflush(stdout);
 
     g_stop = CreateEventW(nullptr, TRUE, FALSE, app::stopEventName(info.mountPoint).c_str());

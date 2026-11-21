@@ -25,13 +25,15 @@ FrameData FrameCache::make(const ClipEntry& clip, uint32_t frame, std::string* e
     return data;
 }
 
-FrameData FrameCache::get(const ClipEntry& clip, uint32_t frame, bool readAhead, std::string* error) {
-    const Key key{&clip, frame};
+FrameData FrameCache::get(const std::shared_ptr<const ClipEntry>& clipPtr, uint32_t frame, bool readAhead,
+                          std::string* error) {
+    const ClipEntry& clip = *clipPtr;
+    const Key key{clip.id, frame};
     std::unique_lock<std::mutex> lock(mutex_);
     const bool forward = noteRead(clip, frame);
     // Only reads going forward start read-ahead: after a jump (or a first read) it waits for the
     // next frame in order, so scattered reads don't make frames no one reads.
-    if (readAhead && forward) queueAhead(clip, frame);
+    if (readAhead && forward) queueAhead(clipPtr, frame);
     bool waited = false;
     for (;;) {
         auto it = entries_.find(key);
@@ -39,7 +41,7 @@ FrameData FrameCache::get(const ClipEntry& clip, uint32_t frame, bool readAhead,
         Entry& e = it->second;
         if (e.data) {
             lru_.splice(lru_.begin(), lru_, e.lru);
-            e.run = clips_[&clip].run;  // read again in this run: it belongs to it now
+            e.run = clips_[clip.id].run;  // read again in this run: it belongs to it now
             if (e.ahead) {
                 e.ahead = false;
                 ++stats_.readAheadUsed;
@@ -112,13 +114,13 @@ void FrameCache::evict(const Key& added) {
 }
 
 bool FrameCache::noteRead(const ClipEntry& clip, uint32_t frame) {
-    ClipState& s = clips_[&clip];
+    ClipState& s = clips_[clip.id];
     const int64_t f = frame;
     const int64_t window = int64_t(std::max(depth_, 1u)) + 1;
     if (s.last >= 0 && (f < s.last - window || f > s.last + window)) {
         // A jump: what was queued for the old place won't be read soon; a new run starts.
         ++s.run;
-        auto end = std::remove_if(queue_.begin(), queue_.end(), [&](const Key& k) { return k.clip == &clip; });
+        auto end = std::remove_if(queue_.begin(), queue_.end(), [&](const Job& j) { return j.clip->id == clip.id; });
         stats_.dropped += uint64_t(queue_.end() - end);
         queue_.erase(end, queue_.end());
     }
@@ -127,19 +129,19 @@ bool FrameCache::noteRead(const ClipEntry& clip, uint32_t frame) {
     return forward;
 }
 
-void FrameCache::queueAhead(const ClipEntry& clip, uint32_t frame) {
+void FrameCache::queueAhead(const std::shared_ptr<const ClipEntry>& clip, uint32_t frame) {
     if (!depth_) return;
-    const uint32_t count = clip.source->frameCount();
+    const uint32_t count = clip->source->frameCount();
     bool queued = false;
     for (unsigned i = 1; i <= depth_; ++i) {
         const uint64_t next = uint64_t(frame) + i;
         if (next >= count) break;
-        const Key k{&clip, uint32_t(next)};
+        const Key k{clip->id, uint32_t(next)};
         if (entries_.count(k)) continue;  // made or being made
-        if (std::find_if(queue_.begin(), queue_.end(), [&](const Key& q) { return q.clip == k.clip && q.frame == k.frame; }) !=
-            queue_.end())
+        if (std::find_if(queue_.begin(), queue_.end(),
+                         [&](const Job& q) { return q.clip->id == k.clip && q.frame == k.frame; }) != queue_.end())
             continue;
-        queue_.push_back(k);
+        queue_.push_back(Job{clip, k.frame});
         queued = true;
     }
     if (queued) work_.notify_all();
@@ -150,16 +152,33 @@ void FrameCache::worker() {
     for (;;) {
         work_.wait(lock, [this] { return stopping_ || !queue_.empty(); });
         if (stopping_) return;
-        const Key key = queue_.front();
+        const Job job = queue_.front();
         queue_.pop_front();
+        const Key key{job.clip->id, job.frame};
         if (entries_.count(key)) continue;  // a reader got there first
         entries_.emplace(key, Entry{});
         lock.unlock();
         std::string why;
-        FrameData data = make(*key.clip, key.frame, &why);
+        FrameData data = make(*job.clip, job.frame, &why);
         finish(key, data, why, true);
         lock.lock();
     }
+}
+
+void FrameCache::forget(uint64_t clipId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto end = std::remove_if(queue_.begin(), queue_.end(), [&](const Job& j) { return j.clip->id == clipId; });
+    queue_.erase(end, queue_.end());
+    for (auto it = entries_.lower_bound(Key{clipId, 0}); it != entries_.end() && it->first.clip == clipId;) {
+        if (!it->second.data) {  // being made: its maker finishes it (and finds it gone, or not)
+            ++it;
+            continue;
+        }
+        bytes_ -= it->second.data->size();
+        lru_.erase(it->second.lru);
+        it = entries_.erase(it);
+    }
+    clips_.erase(clipId);
 }
 
 FrameCache::Stats FrameCache::stats() const {

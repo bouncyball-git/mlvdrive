@@ -32,9 +32,15 @@ user (no administrator rights) and starts it; `uninstall.cmd` removes it. MLV Dr
 "MLV Drive" (`mlvdrive_tray.exe`) sits in the notification area: its icon is in colour while the
 drive is mounted, grey when not. Right-click (or click) it for the menu: mount and unmount, open the
 drive in Explorer (double-click does too), add and remove MLV folders, the drive letter, the DNG format,
-raw corrections (focus and bad pixels too), timecode and the test patterns, mount when it starts,
-start with Windows, edit the settings file. A change while mounted mounts again with it. WinFsp must be installed
-(https://winfsp.dev/rel/); the menu says so if it isn't.
+raw corrections (focus and bad pixels too), timecode and the test patterns, rescan the folders,
+watch them, mount when it starts, start with Windows, edit the settings file. A change while
+mounted mounts again with it. WinFsp must be installed (https://winfsp.dev/rel/); the menu says so
+if it isn't.
+
+Clips added to, removed from or changed in the folders show on the drive by themselves (2 seconds
+after the folders were last touched, so a clip being copied shows once it is complete), without
+unmounting: files already open keep working, and Explorer refreshes. "Rescan the folders" (or
+`mlvdrive rescan M:`) looks at once.
 
 ## Settings
 
@@ -47,6 +53,7 @@ folder = G:\mlv             ; all their clips merged on the drive
 drive = M:                  ; empty: the next free letter from Z: down
 test_patterns = false
 mount_at_start = true       ; the tray app mounts when it starts
+watch = true                ; show clips added or changed in the folders as it happens
 [dng]
 format = 16                 ; 16 or packed
 raw_fixes = true            ; raw corrections at all
@@ -72,15 +79,16 @@ its start: a clip longer than the cache, played again, finds that part made.
 ```
 mlvdrive mount [MLV folder ...] [M:] [--dng=16|packed] [--no-fix|--fix] [--timecode=time|count]
                [--focus-pixels=auto|on|off] [--bad-pixels=off|auto|aggressive|map]
-               [--test-patterns] [--cache=MB|auto] [--read-ahead=N] [--debug]
+               [--test-patterns] [--no-watch] [--cache=MB|auto] [--read-ahead=N] [--debug]
 mlvdrive --version
 mlvdrive mount --test-patterns [M:]
+mlvdrive rescan M:
 mlvdrive unmount M:
 ```
 
 The settings file gives the defaults: with folders set there, `mlvdrive mount` alone mounts them.
-Folders and options given on the command line override it. `mlvdrive unmount M:` also unmounts the
-tray app's drive.
+Folders and options given on the command line override it. `mlvdrive rescan M:` and `mlvdrive
+unmount M:` also work on the tray app's drive.
 
 `--test-patterns` adds a `TestPatterns` folder of 12 test charts, 5 seconds each (1080p25,
 timecode from 10:00:00:00): SMPTE RP 219 HD bars, SMPTE bars, EBU 100% and 75% bars, PLUGE, grey

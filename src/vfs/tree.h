@@ -8,7 +8,11 @@
 // " (2)"). Subfolders holding clips are kept; everything else in a source folder is left out. Every
 // name, size and date is known once the clips are opened: no frame is made to list the tree.
 // With the test patterns on, a clip folder "TestPatterns" of generated frames is added too.
-// The tree doesn't change after it is built, so any number of threads may read it.
+//
+// A tree doesn't change once built, so any number of threads may read it. When the folders change,
+// a new tree is built from the old one (rebuild): clips whose files are as they were are taken over
+// as they are (the same ClipEntry, its frames still cached), only new or changed ones are opened;
+// changes() lists what differs, for telling Windows.
 #pragma once
 
 #include "dng/dng_writer.h"
@@ -36,8 +40,14 @@ struct ClipEntry {
     mlv::WavLayout wav;  // its audio as a WAV file (empty header: none)
     std::unique_ptr<FrameSource> source;  // what the DNG files are made from (uses the above)
     uint64_t time = 0;  // when the clip was recorded (or the file's date)
-    uint64_t id = 0;    // index numbers: the folder's; frame N's file is id + 1 + N, the WAV's
-                        // id + 1 + frame count
+    // Unique for the drive's whole life (never reused, also across rebuilds): the frame cache's
+    // key, and the index numbers: the folder's is id; frame N's id + 1 + N, the WAV's id + 1 +
+    // frame count.
+    uint64_t id = 0;
+    // Where it came from (the .MLV's full path, upper case) and the size and date of its files:
+    // a rebuild takes the entry over while they are the same.
+    std::wstring sourceKey;
+    uint64_t signature = 0;
     bool hasWav() const { return !wav.header.empty(); }
 };
 
@@ -46,7 +56,7 @@ struct Dir {
     uint64_t time = 0;
     uint64_t id = 0;
     std::vector<std::unique_ptr<Dir>> dirs;  // sorted by name, case-insensitively
-    ClipEntry* clip = nullptr;               // set: a clip's folder (holding its DNGs, no dirs)
+    std::shared_ptr<ClipEntry> clip;         // set: a clip's folder (holding its DNGs, no dirs)
 };
 
 // What a path names.
@@ -63,30 +73,43 @@ struct BuildOptions {
     bool testPatterns = false;  // add the "TestPatterns" clip folder
 };
 
+// A difference between two trees, for Windows' change notifications.
+struct Change {
+    enum Action { Added, Removed, Modified } action;
+    bool directory;
+    std::wstring path;  // "\day2\M22-0901\M22-0901_000012.dng"
+};
+
 class Tree {
 public:
     // Finds and opens the clips under the folders, their contents merged at the root. `log` is
     // told about folders that can't be read and clips that can't be opened (both left out).
+    // `previous`: a tree built before with the same options, whose unchanged clips are taken over.
     // False (with `error`) only for settings the drive can't use.
     bool build(const std::vector<std::wstring>& folders, const BuildOptions& options,
-               const std::function<void(const std::string&)>& log, std::string* error);
+               const std::function<void(const std::string&)>& log, std::string* error,
+               const Tree* previous = nullptr);
 
     const Dir& root() const { return root_; }
     size_t clipCount() const { return clips_.size(); }
     uint64_t totalBytes() const { return totalBytes_; }
+    const std::vector<std::shared_ptr<ClipEntry>>& clips() const { return clips_; }
 
     // A path as WinFsp passes it ("\M21-1642\M21-1642_000012.dng"; "\" is the root).
     Node find(const wchar_t* path) const;
+
+    // What differs from `before` to `after`: folders and files added, removed or changed.
+    static std::vector<Change> changes(const Tree& before, const Tree& after);
 
     // A frame's file name ("M21-1642_000012.dng"), the audio's ("M21-1642.wav").
     static std::wstring frameName(const ClipEntry& clip, uint32_t frame);
     static std::wstring wavName(const ClipEntry& clip) { return clip.name + L".wav"; }
 
 private:
-    void addClip(Dir* parent, std::unique_ptr<ClipEntry> entry, uint64_t* nextId);
+    void addClip(Dir* parent, std::shared_ptr<ClipEntry> entry);
 
     Dir root_;
-    std::vector<std::unique_ptr<ClipEntry>> clips_;
+    std::vector<std::shared_ptr<ClipEntry>> clips_;
     uint64_t totalBytes_ = 0;
 };
 

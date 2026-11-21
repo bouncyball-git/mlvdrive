@@ -37,6 +37,7 @@ std::string ntError(const char* what, NTSTATUS status) {
 // handle is closed (Cleanup): WinFsp's Close comes much later, when Windows' cache lets the file
 // go, and reads that come in between (from that cache) fetch the frame again.
 struct FileContext {
+    std::shared_ptr<const vfs::Tree> tree;  // the tree it was opened in: `node` points into it
     vfs::Node node;
     PVOID dirBuffer = nullptr;    // folders: WinFsp's directory buffer
     std::mutex mutex;             // files: Read can come on several threads at once
@@ -47,14 +48,20 @@ struct FileContext {
 }  // namespace
 
 struct Drive::Impl {
-    const vfs::Tree& tree;
+    std::mutex treeMutex;
+    std::shared_ptr<const vfs::Tree> tree;  // the one shown now (update() replaces it)
     vfs::FrameCache& cache;
     FSP_FILE_SYSTEM* fileSystem = nullptr;
     PSECURITY_DESCRIPTOR security = nullptr;  // the same for everything: read-only for everyone
     ULONG securitySize = 0;
     std::wstring mountPoint;
 
-    Impl(const vfs::Tree& t, vfs::FrameCache& c) : tree(t), cache(c) {}
+    Impl(std::shared_ptr<const vfs::Tree> t, vfs::FrameCache& c) : tree(std::move(t)), cache(c) {}
+
+    std::shared_ptr<const vfs::Tree> current() {
+        std::lock_guard<std::mutex> lock(treeMutex);
+        return tree;
+    }
 
     static Impl* of(FSP_FILE_SYSTEM* fs) { return static_cast<Impl*>(fs->UserContext); }
 
@@ -113,7 +120,7 @@ struct Drive::Impl {
     static NTSTATUS GetVolumeInfo(FSP_FILE_SYSTEM* fs, FSP_FSCTL_VOLUME_INFO* info) {
         Impl* self = of(fs);
         std::memset(info, 0, sizeof *info);
-        info->TotalSize = std::max<uint64_t>(self->tree.totalBytes(), kSectorSize);
+        info->TotalSize = std::max<uint64_t>(self->current()->totalBytes(), kSectorSize);
         info->FreeSize = 0;
         static const wchar_t kLabel[] = L"MLV Drive";
         info->VolumeLabelLength = UINT16((sizeof kLabel) - sizeof(wchar_t));
@@ -124,7 +131,7 @@ struct Drive::Impl {
     static NTSTATUS GetSecurityByName(FSP_FILE_SYSTEM* fs, PWSTR name, PUINT32 attributes,
                                       PSECURITY_DESCRIPTOR security, SIZE_T* securitySize) {
         Impl* self = of(fs);
-        vfs::Node n = self->tree.find(name);
+        vfs::Node n = self->current()->find(name);
         if (n.kind == vfs::Node::None) return STATUS_OBJECT_NAME_NOT_FOUND;
         if (attributes) *attributes = n.kind == vfs::Node::Directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_READONLY;
         return self->copySecurity(security, securitySize);
@@ -133,12 +140,14 @@ struct Drive::Impl {
     static NTSTATUS Open(FSP_FILE_SYSTEM* fs, PWSTR name, UINT32 createOptions, UINT32 /*grantedAccess*/,
                          PVOID* context, FSP_FSCTL_FILE_INFO* info) {
         Impl* self = of(fs);
-        vfs::Node n = self->tree.find(name);
+        std::shared_ptr<const vfs::Tree> tree = self->current();
+        vfs::Node n = tree->find(name);
         if (n.kind == vfs::Node::None) return STATUS_OBJECT_NAME_NOT_FOUND;
         if (n.kind != vfs::Node::Directory && (createOptions & FILE_DIRECTORY_FILE)) return STATUS_NOT_A_DIRECTORY;
         if (n.kind == vfs::Node::Directory && (createOptions & FILE_NON_DIRECTORY_FILE)) return STATUS_FILE_IS_A_DIRECTORY;
         auto* ctx = new (std::nothrow) FileContext;
         if (!ctx) return STATUS_INSUFFICIENT_RESOURCES;
+        ctx->tree = std::move(tree);
         ctx->node = n;
         *context = ctx;
         self->fileInfo(n, info);
@@ -202,7 +211,7 @@ struct Drive::Impl {
                 bytes = &ctx->header;
             } else {
                 std::string error;
-                ctx->file = self->cache.get(c, ctx->node.frame, true, &error);
+                ctx->file = self->cache.get(ctx->node.dir->clip, ctx->node.frame, true, &error);
                 if (!ctx->file) {
                     std::fprintf(stderr, "%s frame %u: %s\n", narrow(c.name).c_str(), ctx->node.frame, error.c_str());
                     return STATUS_UNEXPECTED_IO_ERROR;
@@ -238,7 +247,7 @@ struct Drive::Impl {
         if (FspFileSystemAcquireDirectoryBuffer(&ctx->dirBuffer, marker == nullptr, &result)) {
             FSP_FSCTL_FILE_INFO info;
             bool ok = true;
-            if (dir != &self->tree.root()) {
+            if (dir != &ctx->tree->root()) {
                 self->fileInfo(ctx->node, &info);
                 ok = addEntry(ctx, L".", info, &result) && addEntry(ctx, L"..", info, &result);
             }
@@ -276,7 +285,51 @@ struct Drive::Impl {
     }
 };
 
-Drive::Drive(const vfs::Tree& tree, vfs::FrameCache& cache) : impl_(std::make_unique<Impl>(tree, cache)) {}
+Drive::Drive(std::shared_ptr<const vfs::Tree> tree, vfs::FrameCache& cache)
+    : impl_(std::make_unique<Impl>(std::move(tree), cache)) {}
+
+void Drive::update(std::shared_ptr<const vfs::Tree> tree, const std::vector<vfs::Change>& changes) {
+    Impl& m = *impl_;
+    {
+        std::lock_guard<std::mutex> lock(m.treeMutex);
+        m.tree = std::move(tree);
+    }
+    if (!m.fileSystem || changes.empty()) return;
+    // Names as WinFsp knows them: this file system doesn't normalise them, so upper case.
+    NTSTATUS status = STATUS_CANT_WAIT;
+    for (int tries = 0; tries < 20 && (status = FspFileSystemNotifyBegin(m.fileSystem, 1000)) == STATUS_CANT_WAIT; ++tries)
+        Sleep(50);
+    if (!NT_SUCCESS(status)) return;
+    std::vector<uint8_t> buffer(64 * 1024);
+    ULONG used = 0;
+    auto flush = [&] {
+        if (used) FspFileSystemNotify(m.fileSystem, reinterpret_cast<FSP_FSCTL_NOTIFY_INFO*>(buffer.data()), used);
+        used = 0;
+    };
+    for (const vfs::Change& c : changes) {
+        union {
+            UINT8 bytes[sizeof(FSP_FSCTL_NOTIFY_INFO) + 1024 * sizeof(WCHAR)];
+            FSP_FSCTL_NOTIFY_INFO n;
+        } info;
+        std::wstring name = c.path;
+        if (name.size() > 1024) continue;
+        CharUpperBuffW(name.data(), DWORD(name.size()));
+        info.n.Size = UINT16(sizeof(FSP_FSCTL_NOTIFY_INFO) + name.size() * sizeof(WCHAR));
+        info.n.Filter = c.action == vfs::Change::Modified
+                            ? FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE
+                            : (c.directory ? FILE_NOTIFY_CHANGE_DIR_NAME : FILE_NOTIFY_CHANGE_FILE_NAME);
+        info.n.Action = c.action == vfs::Change::Added     ? FILE_ACTION_ADDED
+                        : c.action == vfs::Change::Removed ? FILE_ACTION_REMOVED
+                                                           : FILE_ACTION_MODIFIED;
+        std::memcpy(info.n.FileNameBuf, name.data(), name.size() * sizeof(WCHAR));
+        if (!FspFileSystemAddNotifyInfo(&info.n, buffer.data(), ULONG(buffer.size()), &used)) {
+            flush();
+            FspFileSystemAddNotifyInfo(&info.n, buffer.data(), ULONG(buffer.size()), &used);
+        }
+    }
+    flush();
+    FspFileSystemNotifyEnd(m.fileSystem);
+}
 
 Drive::~Drive() {
     unmount();

@@ -25,6 +25,7 @@ namespace {
 constexpr UINT kTrayMessage = WM_APP + 1;   // the icon's mouse events
 constexpr UINT kJobDone = WM_APP + 2;       // a mount or unmount finished (lParam: JobResult*)
 constexpr UINT kStopRequest = WM_APP + 3;   // `mlvdrive unmount` asked
+constexpr UINT kRescanned = WM_APP + 4;     // a rescan finished (lParam: app::RescanResult*)
 constexpr UINT kIconId = 1;
 const wchar_t kAppName[] = L"MLV Drive";
 const wchar_t kVersion[] = L"" MLVDRIVE_VERSION;
@@ -33,7 +34,7 @@ const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 enum MenuId : UINT {
     kMount = 100, kUnmount, kOpen, kAddFolder, kDriveAuto, kFormat16, kFormatPacked, kFixes, kTimecodeTime,
     kTimecodeCount, kPatterns, kMountAtStart, kAutostart, kEditSettings, kReloadSettings, kGetWinFsp, kQuit,
-    kFocusAuto, kFocusOn, kFocusOff, kBadOff, kBadAuto, kBadAggressive, kBadMap,
+    kFocusAuto, kFocusOn, kFocusOff, kBadOff, kBadAuto, kBadAggressive, kBadMap, kRescan, kWatch,
     kDriveFirst = 200,         // + letter index (A = 0)
     kRemoveFolderFirst = 300   // + the folder's index
 };
@@ -144,6 +145,40 @@ void StartJob(bool mount, bool notify) {
         }
         PostMessageW(g_wnd, kJobDone, 0, reinterpret_cast<LPARAM>(r.release()));
     });
+}
+
+// Looks at the folders again (on a worker thread): what changed shows without unmounting.
+void StartRescan() {
+    if (g_state != State::Mounted) return;
+    if (g_worker.joinable()) g_worker.join();
+    g_worker = std::thread([] {
+        auto r = std::make_unique<app::RescanResult>();
+        std::string error;
+        if (g_mounter.rescan(r.get(), &error)) PostMessageW(g_wnd, kRescanned, 0, reinterpret_cast<LPARAM>(r.release()));
+    });
+}
+
+// After a rescan (asked for in the menu, or by the folders changing): the counts, and a word when
+// clips came or went.
+void Rescanned(app::RescanResult* raw) {
+    std::unique_ptr<app::RescanResult> r(raw);
+    if (g_state != State::Mounted) return;
+    g_info = r->info;
+    UpdateIcon();
+    if (r->added || r->removed || r->changed) {
+        std::wstring text;
+        auto part = [&](size_t n, const wchar_t* what) {
+            if (!n) return;
+            if (!text.empty()) text += L", ";
+            text += std::to_wstring(n) + (n == 1 ? L" clip " : L" clips ") + what;
+        };
+        part(r->added, L"added");
+        part(r->removed, L"removed");
+        part(r->changed, L"changed");
+        Balloon(g_info.mountPoint + L" updated", text + L".", false);
+    } else if (!r->automatic) {
+        Balloon(g_info.mountPoint + L" is up to date", L"No clips added, removed or changed.", false);
+    }
 }
 
 void JobDone(JobResult* raw) {
@@ -282,6 +317,7 @@ void ShowMenu() {
         item(menu, kGetWinFsp, L"Get WinFsp (needed for the drive)…");
     } else if (mounted) {
         item(menu, kOpen, L"Open " + g_info.mountPoint + L" in Explorer");
+        item(menu, kRescan, L"Rescan the folders", !busy);
         item(menu, kUnmount, L"Unmount " + g_info.mountPoint, !busy);
     } else {
         const bool canMount = !busy && (!g_settings.folders.empty() || g_settings.testPatterns);
@@ -340,6 +376,7 @@ void ShowMenu() {
     radio(dng, kTimecodeCount, L"Timecode: from 00:00:00:00", g_settings.timecode == dng::Timecode::FrameCount);
     AppendMenuW(menu, MF_POPUP | (busy ? MF_GRAYED : 0), reinterpret_cast<UINT_PTR>(dng), L"DNG");
     item(menu, kPatterns, L"Test patterns (12 charts, 5 s each)", !busy, g_settings.testPatterns);
+    item(menu, kWatch, L"Watch the folders for new clips", !busy, g_settings.watch);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
     item(menu, kMountAtStart, L"Mount when MLV Drive starts", true, g_settings.mountAtStart);
@@ -401,6 +438,8 @@ void Command(UINT id) {
         case kTimecodeCount: g_settings.timecode = dng::Timecode::FrameCount; SettingsChanged(); return;
         case kPatterns: g_settings.testPatterns = !g_settings.testPatterns; SettingsChanged(); return;
         case kMountAtStart: g_settings.mountAtStart = !g_settings.mountAtStart; SettingsChanged(); return;
+        case kRescan: StartRescan(); return;
+        case kWatch: g_settings.watch = !g_settings.watch; SettingsChanged(); return;
         case kAutostart: SetAutostart(!Autostart()); return;
         case kEditSettings: {
             std::string error;
@@ -446,6 +485,7 @@ LRESULT CALLBACK WindowProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         case kJobDone: JobDone(reinterpret_cast<JobResult*>(lp)); return 0;
+        case kRescanned: Rescanned(reinterpret_cast<app::RescanResult*>(lp)); return 0;
         case kStopRequest:
             if (g_state == State::Mounted) StartJob(false, false);
             return 0;
@@ -470,6 +510,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 0;
     }
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    // Rescans started by the folders changing (or `mlvdrive rescan`) come from the mounter's thread.
+    g_mounter.onRescan([](const app::RescanResult& r) {
+        PostMessageW(g_wnd, kRescanned, 0, reinterpret_cast<LPARAM>(new app::RescanResult(r)));
+    });
     g_inst = inst;
     LoadIconMetric(inst, MAKEINTRESOURCEW(1), LIM_SMALL, &g_iconOn);
     LoadIconMetric(inst, MAKEINTRESOURCEW(2), LIM_SMALL, &g_iconOff);

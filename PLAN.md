@@ -82,8 +82,8 @@ mlvdrive_tray.exe (tray app) / mlvdrive.exe (console), on app/settings + app/mou
 ```
 
 - **Mount:** `mlvdrive mount <MLV folder> [M:]`. Scan the folder (and subfolders) once, open
-  each clip once (frame index + metadata in memory), build the tree. Watch the folder for new
-  or removed MLVs (later).
+  each clip once (frame index + metadata in memory), build the tree. The folders are watched:
+  clips added, removed or changed show without remounting (done in 0.2.0, see milestone 7).
 - **Read path:** a read of `M21-1642_000137.dng` at (offset, length) → get frame 137 from the
   cache or generate it (decode → corrections → DNG bytes) → copy the requested range. Many reads
   per file: keep the generated frame until the file handle closes (MLVFS does this too) and in
@@ -281,6 +281,21 @@ in Resolve.
      installs per user from its own folder; `build.ps1 install` uses it from `build\stage`;
      `build.ps1 package` makes `dist\MLVDrive-<version>-win64.zip` (2.8 MB). Checked: installed
      from the unpacked zip over a running copy, started, `M:` back with every frame checked.
+     Version 0.2.0 since.
+   - Live folders (0.2.0): a rescan builds a new tree from the old one: clips whose files have
+     the same size and date (every chunk) are taken over as they are (same ClipEntry, frames
+     still cached), new or changed ones opened. The drive swaps trees (`Drive::update`): opens
+     from then on use the new one, open files keep theirs until closed; Windows is notified of
+     every folder and file added, removed or changed (names upper case: no name normalisation),
+     which also drops its cached listings and sizes. Clip ids are never reused (the frame
+     cache's key; index numbers), a changed or removed clip's frames are forgotten. Watching
+     (`watch = true`, `--no-watch`): a thread per folder on ReadDirectoryChangesW (subtree), a
+     missing folder retried every 5 s; a rescan 2 s after the last change (a copy in progress
+     waits); `mlvdrive rescan M:` (named event, also for the tray's drive) and the tray's
+     "Rescan the folders" at once. Checked: a clip copied in appears 2 s after, verified; a
+     clip replaced by other footage under the same name updates (124 -> 542 frames, frame 300
+     verified) while a handle opened before keeps reading; a deleted clip disappears; listings
+     are fresh after each change.
 8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).
 
 **Resolve, later** (when the user wants to run it): import `M:\<clip>` as one clip with the

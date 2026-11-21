@@ -119,6 +119,7 @@ Settings loadSettings(const std::wstring& path, std::vector<std::string>* warnin
         else if (key == "drive") s.drive = normalizeDrive(Wide(value));
         else if (key == "test_patterns") ok = ParseBool(value, &s.testPatterns);
         else if (key == "mount_at_start") ok = ParseBool(value, &s.mountAtStart);
+        else if (key == "watch") ok = ParseBool(value, &s.watch);
         else if (key == "raw_fixes") ok = ParseBool(value, &s.rawFixes);
         else if (key == "format") {
             const std::string v = Lower(value);
@@ -187,6 +188,7 @@ bool saveSettings(const std::wstring& path, const Settings& s, std::string* erro
     line("drive", Utf8(s.drive), "empty: the next free letter from Z: down");
     line("test_patterns", s.testPatterns ? "true" : "false");
     line("mount_at_start", s.mountAtStart ? "true" : "false", "the tray app mounts when it starts");
+    line("watch", s.watch ? "true" : "false", "show clips added or changed in the folders as it happens");
     t += std::string("[dng]") + nl;
     line("format", s.format == dng::Output::Uncompressed ? "packed" : "16", "16 or packed");
     line("raw_fixes", s.rawFixes ? "true" : "false", "raw corrections at all");
