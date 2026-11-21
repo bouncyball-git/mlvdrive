@@ -527,9 +527,22 @@ int lj92_fast = 1;  /* MLV Drive: 0 decodes and encodes with the original code (
 /* MLV Drive: a faster decoder for the common streams (predictor 1 or 6, any number of
  * interleaved components, the image written contiguously, no linearisation table): camera MLV
  * frames are 2 components with predictor 1, MLV-App's own 1 component with
- * predictor 6. A 64-bit bit reader that loads 4 bytes at once when none is 0xFF (no stuffing),
- * one table lookup per sample, the prediction read from the rows already written. The output
- * is the same as the generic decoder's, value for value. */
+ * predictor 6. The output is the same as the generic decoder's, value for value.
+ *
+ * The bit reader refills 8 bytes at a time straight from the data, without a branch on the data,
+ * whenever none of them is 0xFF (the start of a stuffed byte or a marker): then 56 to 63 bits
+ * wait. Near a 0xFF (a few % of refills) it goes byte by byte. One lookup in a 12-bit table gives
+ * the difference itself for most samples; where only a code's extra bits don't fit, they are read
+ * straight from the buffer; only codes longer than 12 bits take the full table. As the original
+ * reader, data past the end or a marker reads as zeros (corrupt data decodes to wrong values,
+ * never out of bounds). (Copying the data without its stuffing first, to refill with no check at
+ * all, was as fast on one thread but slower on all of them: the copy's memory traffic.) */
+
+#if defined(_MSC_VER)
+#define lj92_bswap64 _byteswap_uint64
+#else
+#define lj92_bswap64 __builtin_bswap64
+#endif
 
 typedef struct {
     const u8* p;     /* next byte to load */
@@ -538,20 +551,9 @@ typedef struct {
     int bits;        /* how many */
 } lj92_bits;
 
-/* Loads bytes until at least 32 bits are waiting (bytes past the end, or after a marker, read
- * as zeros: corrupt data then decodes to wrong values, never out of bounds). */
-static inline void lj92_refill(lj92_bits* r) {
+/* Byte by byte, until at least 32 bits wait: stuffed 0xFF, a marker, the end. */
+static void lj92_refill_bytes(lj92_bits* r) {
     while (r->bits < 32) {
-        if (r->p + 4 <= r->end) {
-            u32 w = ((u32)r->p[0] << 24) | ((u32)r->p[1] << 16) | ((u32)r->p[2] << 8) | r->p[3];
-            u32 t = ~w;
-            if (((t - 0x01010101u) & ~t & 0x80808080u) == 0) {  /* no 0xFF among them */
-                r->buf |= (uint64_t)w << (32 - r->bits);
-                r->bits += 32;
-                r->p += 4;
-                continue;
-            }
-        }
         u32 byte = 0;
         if (r->p < r->end) {
             byte = *r->p;
@@ -567,24 +569,27 @@ static inline void lj92_refill(lj92_bits* r) {
     }
 }
 
-/* The next difference: Huffman code (the lookup table of parseHuff), then its extra bits. */
-static inline int lj92_diff(lj92_bits* r, const u16* lut, int lutbits) {
-    if (r->bits < 32) lj92_refill(r);
-    u16 e = lut[r->buf >> (64 - lutbits)];
-    int len = e & 0xFF, t = e >> 8;
-    r->buf <<= len;
-    r->bits -= len;
-    if (t == 0) return 0;
-    if (t == 16) return 32768;  /* no extra bits */
-    int v = (int)(r->buf >> (64 - t));
-    r->buf <<= t;
-    r->bits -= t;
-    return v < (1 << (t - 1)) ? v - (1 << t) + 1 : v;
+/* Fills the buffer to 56..63 bits when the next 8 bytes hold no 0xFF (the bytes below the bits
+ * waiting may be loaded twice: the same bits, OR-ed again); else byte by byte. */
+static inline void lj92_refill(lj92_bits* r) {
+    if (r->p + 8 <= r->end) {
+        uint64_t w;
+        memcpy(&w, r->p, 8);
+        const uint64_t t = ~w;
+        if (((t - 0x0101010101010101ull) & ~t & 0x8080808080808080ull) == 0) {  /* no 0xFF among them */
+            r->buf |= lj92_bswap64(w) >> r->bits;
+            r->p += (63 - r->bits) >> 3;
+            r->bits |= 56;
+            return;
+        }
+    }
+    lj92_refill_bytes(r);
 }
 
 /* The combined table: indexed by the next LJ92_FASTBITS bits; where the code and its extra bits
  * both fit, the difference itself (entry = diff << 8 | bits used); else 0 in the low byte, the
- * code's length and its count of extra bits above (entry = t << 16 | len << 8). */
+ * code's length and its count of extra bits above (entry = t << 16 | len << 8), the length 0 or
+ * over LJ92_FASTBITS for a code longer than the table. */
 #ifndef LJ92_FASTBITS
 #define LJ92_FASTBITS 12  /* measured fastest (12: 3.70 ns a pixel, 13: 3.73, 14: 4.03) */
 #endif
@@ -612,6 +617,27 @@ static void lj92_fill_fast(int32_t* fast, const u16* lut, int lutbits) {
     }
 }
 
+/* A sample the 12-bit table doesn't finish: its code (from the entry, or for a long code from
+ * the full table), then its extra bits. 32 bits are waiting: enough for a 16-bit code and 16
+ * extra bits. */
+static int lj92_diff_slow(lj92_bits* r, int32_t e, const u16* lut, int lutbits) {
+    int len = (e >> 8) & 0xFF, t = (e >> 16) & 0xFF;
+    if (len == 0 || len > LJ92_FASTBITS) {
+        u16 f = lut[r->buf >> (64 - lutbits)];
+        len = f & 0xFF;
+        t = f >> 8;
+    }
+    r->buf <<= len;
+    r->bits -= len;
+    if (t == 0) return 0;
+    if (t == 16) return 32768;  /* no extra bits */
+    int v = (int)(r->buf >> (64 - t));
+    r->buf <<= t;
+    r->bits -= t;
+    return v < (1 << (t - 1)) ? v - (1 << t) + 1 : v;
+}
+
+/* The next difference. */
 static inline int lj92_diff_fast(lj92_bits* r, const int32_t* fast, const u16* lut, int lutbits) {
     if (r->bits < 32) lj92_refill(r);
     int32_t e = fast[r->buf >> (64 - LJ92_FASTBITS)];
@@ -621,7 +647,7 @@ static inline int lj92_diff_fast(lj92_bits* r, const int32_t* fast, const u16* l
         r->bits -= used;
         return e >> 8;  /* arithmetic shift: the signed difference */
     }
-    return lj92_diff(r, lut, lutbits);  /* a long code or long extra bits */
+    return lj92_diff_slow(r, e, lut, lutbits);
 }
 
 static int parseFast(ljp* self, int pred) {
@@ -660,7 +686,6 @@ static int parseFast(ljp* self, int pred) {
                 row[i] = (u16)(px + lj92_diff(&r, lut, lutbits));
             }
         }
-        if (r.p > r.end) ret = LJ92_ERROR_CORRUPT;
     }
     self->ix = (int)(r.p - self->data);
     free(fast);

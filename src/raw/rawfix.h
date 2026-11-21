@@ -38,6 +38,10 @@ struct FixSettings {
 // (16 bands of rows on several threads) or in one pass on one thread as it used to be.
 void stripeFactors(const mlv::Clip& clip, const uint16_t* image, bool onePass, double out[8]);
 
+// The vector (SSE4.1) code where there is one, or the scalar code it must equal (for comparing).
+// On by default; process-wide.
+void setSimd(bool on);
+
 // Whether a camera has focus pixels (and the auto setting turns their fix on).
 bool cameraHasFocusPixels(uint32_t cameraModel);
 

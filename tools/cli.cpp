@@ -6,6 +6,9 @@
 //                                                       frame decoded and corrected now
 //   mlvdrive_cli bench <clip.MLV> [frames]              ms a frame per stage, then frames/s on
 //                                                       every thread
+//   mlvdrive_cli selftest <clip.MLV>                    every frame: the fast decoder against the
+//                                                       original one, the vector raw corrections
+//                                                       against the scalar ones (value for value)
 //   mlvdrive_cli read  <folder>                         reads every .dng in a folder (a clip's
 //                                                       folder on the drive) in name order:
 //                                                       frames/s, MB/s, ms a file
@@ -53,6 +56,7 @@ int usage() {
                  "       mlvdrive_cli dng   <clip.MLV> <frame> <out.dng> [--dng=16|packed|lj92|pass] [--no-fix]\n"
                  "       mlvdrive_cli check <clip.MLV> <frame> <file.dng> [--no-fix]\n"
                  "       mlvdrive_cli bench <clip.MLV> [frames] [--dng=16|packed|lj92|pass] [--no-fix]\n"
+                 "       mlvdrive_cli selftest <clip.MLV>\n"
                  "       mlvdrive_cli read  <folder> [--threads=N] [--passes=N] [--buffered]\n");
     return 2;
 }
@@ -475,6 +479,57 @@ int bench(const Args& a) {
     return 0;
 }
 
+// --- selftest ---
+
+int selftest(const Args& a) {
+    if (a.positional.size() != 1) return usage();
+    auto clip = openClip(a.positional[0]);
+    if (!clip) return 1;
+    const size_t px = size_t(clip->width()) * clip->height();
+    std::vector<uint16_t> fast(px), ref(px), fixedRef(px);
+    std::vector<uint8_t> scratch;
+    std::string error;
+    raw::Fixer fixVector(*clip, raw::FixSettings{}), fixScalar(*clip, raw::FixSettings{});
+    uint32_t decodeDiffer = 0, fixDiffer = 0;
+    double fastMs = 0, refMs = 0, vecMs = 0, scalarMs = 0;
+    for (uint32_t f = 0; f < clip->frameCount(); ++f) {
+        lj92_fast = 1;
+        auto t0 = Clock::now();
+        bool ok = clip->decodeFrame(f, fast.data(), scratch, &error);
+        fastMs += msSince(t0);
+        lj92_fast = 0;
+        t0 = Clock::now();
+        ok = ok && clip->decodeFrame(f, ref.data(), scratch, &error);
+        refMs += msSince(t0);
+        lj92_fast = 1;
+        if (!ok) {
+            std::fprintf(stderr, "frame %u: %s\n", f, error.c_str());
+            return 1;
+        }
+        if (fast != ref && decodeDiffer++ == 0) std::printf("frame %u: the decoders differ\n", f);
+
+        fixedRef = ref;
+        raw::setSimd(true);
+        t0 = Clock::now();
+        fixVector.apply(fast.data(), f);
+        vecMs += msSince(t0);
+        raw::setSimd(false);
+        t0 = Clock::now();
+        fixScalar.apply(fixedRef.data(), f);
+        scalarMs += msSince(t0);
+        raw::setSimd(true);
+        if (fast != fixedRef && fixDiffer++ == 0) std::printf("frame %u: the raw corrections differ\n", f);
+    }
+    const uint32_t n = clip->frameCount();
+    std::printf("%s, %u frames (%s)\n", clip->name().c_str(), n,
+                fixVector.active() ? "raw corrections on" : "no corrections needed");
+    std::printf("decoder:     %u frames differ; fast %.2f ms a frame, original %.2f\n", decodeDiffer, fastMs / n,
+                refMs / n);
+    std::printf("corrections: %u frames differ; vector %.2f ms a frame, scalar %.2f\n", fixDiffer, vecMs / n,
+                scalarMs / n);
+    return decodeDiffer || fixDiffer ? 1 : 0;
+}
+
 // --- read ---
 
 // Reads a whole file in 1 MB pieces; the bytes read, or -1.
@@ -592,6 +647,7 @@ int main(int argc, char** argv) {
     else if (cmd == "check") rc = check(a);
     else if (cmd == "bench") rc = bench(a);
     else if (cmd == "read") rc = readFolder(a);
+    else if (cmd == "selftest") rc = selftest(a);
     else return usage();
     par::shutdown();
     return rc;

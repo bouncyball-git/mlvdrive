@@ -37,6 +37,8 @@ mlvdrive_cli dng   <clip.MLV> <frame> <out.dng>   one frame as a DNG
 mlvdrive_cli check <clip.MLV> <frame> <file.dng>  a DNG read back and compared with the frame
 mlvdrive_cli bench <clip.MLV> [frames]            ms a frame per stage, frames/s on every thread
     --dng=16|packed|lj92|pass   DNG format (default 16-bit)    --no-fix   no raw corrections
+mlvdrive_cli selftest <clip.MLV>                  every frame: fast decoder and vector corrections
+                                                  against the original code, value for value
 mlvdrive_cli read  <folder>                       reads a mounted clip's DNGs in order: frames/s
     --threads=N  readers (default 1)   --passes=N (default 2)   --buffered  through Windows' cache
 ```

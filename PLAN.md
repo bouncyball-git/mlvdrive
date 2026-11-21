@@ -179,10 +179,22 @@ in Resolve.
      read-ahead -> 142 frames/s first pass, 261 second (11x real time); 2 readers 268 (the CPU
      is the limit); every frame made ahead was read. Random order: 23 ms a frame. Frames made
      ahead are byte-identical (`check`).
-   - Not done (not needed for 1080p): WinFsp tuning; faster single-frame making (LJ92
-     decoder: wider bit-reader refills; decoding one frame on several threads by Huffman
-     resynchronisation, ~4-5x lower latency per frame, no throughput gain; stripe fix merged
-     into the decode). Worth it for UHD / 5.7K latency: measure on such a clip first.
+   - Making a frame faster (after milestone 4; output unchanged, `mlvdrive_cli selftest`
+     compares every frame value for value with the original decoder and the scalar fixes):
+     - Stripe correction in SSE4.1 (run-time check, scalar otherwise; `raw::setSimd`): its two
+       passes (brightest pixel 1.5 ms, factors 2.4 ms) were scalar compute, not memory (a plain
+       pass is 0.5 ms). 3.9 -> 1.2 ms. Merging it into the decode can't be exact: it needs the
+       frame's brightest pixel (18,708 pixels sit at it in frame 0) before any row.
+     - LJ92 bit reader: 8-byte refills without a branch where none is 0xFF, long values' extra
+       bits read inline (3.2% of samples took a second table lookup). Decode 8.2 -> 6.3 ms.
+       Copying the data without stuffing first was as fast on one thread but 5% slower on 8:
+       its memory traffic.
+     - Test clip (i7-4790K, 4 cores / 8 threads): a whole 16-bit DNG 12.3 -> 7.7 ms on one
+       thread; 400 -> ~540 frames/s on 8. Through the drive one reader stays ~270 frames/s:
+       moving 4 MB files through WinFsp is now the limit there.
+   - Not done: WinFsp tuning; decoding one frame on several threads (Huffman
+     resynchronisation: ~4-5x lower latency per frame, no throughput gain). Worth measuring on a
+     UHD / 5.7K clip first.
 5. **Audio + timecode**: `<name>.wav` (BWF with the clip's timecode, mlvtoolbox `wav.cpp`),
    DNG TimeCodes as time of day (the writer has it: `Timecode::TimeOfDay`), so Resolve syncs
    audio automatically.

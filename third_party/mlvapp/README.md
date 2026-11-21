@@ -2,8 +2,10 @@ From MLV-App (https://github.com/ilia3101/MLV-App), commit abdb10fd02dd (2026-11
 
 - `liblj92/` (MIT, Andrew Baldwin): lossless JPEG. Changed: `__builtin_clz` for MSVC; `extern "C"`;
   a fast decoder (`parseFast`) for predictor 1 and single-component predictor 6 streams written
-  whole: a 64-bit bit reader, a combined 12-bit code + difference table, the prediction read from
-  the output; and a fast encoder (`fastEncode`) for images read whole: each row's differences
+  whole: a 64-bit bit reader refilling 8 bytes at a time without a branch where none is 0xFF,
+  a combined 12-bit code + difference table (extra bits that don't fit read straight from the
+  buffer, the full table only for codes over 12 bits), the prediction read from the output; and a
+  fast encoder (`fastEncode`) for images read whole: each row's differences
   computed once, branch-free size categories and value bits, a 64-bit bit writer. The same values
   and the same bytes as the original (`lj92_fast = 0` uses it, for comparing).
 - `camid/` (GPL): camera colour matrices and focal plane data. Changed: `extern "C"`.

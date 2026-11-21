@@ -10,6 +10,20 @@
 #include <thread>
 #include <vector>
 
+// SSE4.1 for the stripe correction on x86 (checked at run time; the scalar code otherwise).
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
+#define RAWFIX_SSE41 1
+#include <smmintrin.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#define RAWFIX_SSE41_FN
+#else
+#define RAWFIX_SSE41_FN __attribute__((target("sse4.1")))
+#endif
+#else
+#define RAWFIX_SSE41 0
+#endif
+
 namespace raw {
 
 namespace {
@@ -147,7 +161,86 @@ Stripes FactorsFromHistogram(const std::vector<int>& hist, const int num[8], int
     return s;
 }
 
+#if RAWFIX_SSE41
+// The brightest pixel of the 8-column groups (as the scalar loop in ApplyStripes), 8 at a time.
+RAWFIX_SSE41_FN int BrightestSse41(const uint16_t* img, int width, int height) {
+    const int groups = width / 8;
+    __m128i m = _mm_setzero_si128();
+    for (int y = 0; y < height; ++y) {
+        const uint16_t* row = img + size_t(y) * width;
+        for (int g = 0; g < groups; ++g)
+            m = _mm_max_epu16(m, _mm_loadu_si128(reinterpret_cast<const __m128i*>(row + g * 8)));
+    }
+    m = _mm_max_epu16(m, _mm_srli_si128(m, 8));
+    m = _mm_max_epu16(m, _mm_srli_si128(m, 4));
+    m = _mm_max_epu16(m, _mm_srli_si128(m, 2));
+    return _mm_extract_epi16(m, 0);
+}
+
+// uint16_t(min(white, (v - black) * c / 65536 + black)) for 4 values (32-bit lanes).
+RAWFIX_SSE41_FN inline __m128i ScaleSse41(__m128i v32, __m128i c, __m128i black32, __m128i white32) {
+    const __m128i prod = _mm_mullo_epi32(_mm_sub_epi32(v32, black32), c);
+    const __m128i neg = _mm_srai_epi32(prod, 31);  // -1 where negative
+    const __m128i q = _mm_srai_epi32(_mm_add_epi32(prod, _mm_and_si128(neg, _mm_set1_epi32(0xFFFF))), 16);  // / 65536 toward 0
+    return _mm_and_si128(_mm_min_epi32(white32, _mm_add_epi32(q, black32)), _mm_set1_epi32(0xFFFF));  // uint16_t(...)
+}
+
+// The factors applied to 8 columns at a time: the same values as the scalar loop in ApplyStripes,
+// its integer arithmetic step for step (C's division rounding toward zero, the 16-bit wrap of a
+// result below 0).
+RAWFIX_SSE41_FN void ApplyStripesSse41(const int coefficients[8], uint16_t* img, int black, int white, int width,
+                                       int height) {
+    const int groups = width / 8;
+    const __m128i c0 = _mm_setr_epi32(coefficients[0], coefficients[1], coefficients[2], coefficients[3]);
+    const __m128i c1 = _mm_setr_epi32(coefficients[4], coefficients[5], coefficients[6], coefficients[7]);
+    // Lanes whose factor is 0 (not measured) are left alone.
+    const __m128i hasFactor = _mm_packs_epi32(_mm_xor_si128(_mm_cmpeq_epi32(c0, _mm_setzero_si128()), _mm_set1_epi32(-1)),
+                                              _mm_xor_si128(_mm_cmpeq_epi32(c1, _mm_setzero_si128()), _mm_set1_epi32(-1)));
+    const __m128i black32 = _mm_set1_epi32(black);
+    const __m128i white32 = _mm_set1_epi32(white);
+    const __m128i whiteBelow = _mm_set1_epi16(int16_t(uint16_t(white - 1)));  // v < white <=> min(v, white-1) == v
+    const __m128i zero = _mm_setzero_si128();
+    for (int y = 0; y < height; ++y) {
+        uint16_t* row = img + size_t(y) * width;
+        for (int g = 0; g < groups; ++g) {
+            uint16_t* p = row + g * 8;
+            if (!(p[0] > black + 64)) continue;  // the group's first pixel: not in the darkest tones
+            const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+            const __m128i lo = ScaleSse41(_mm_cvtepu16_epi32(v), c0, black32, white32);
+            const __m128i hi = ScaleSse41(_mm_cvtepu16_epi32(_mm_srli_si128(v, 8)), c1, black32, white32);
+            const __m128i scaled = _mm_packus_epi32(lo, hi);  // exact: both halves are 0..65535
+            __m128i take = _mm_andnot_si128(_mm_cmpeq_epi16(v, zero), hasFactor);           // v != 0
+            take = _mm_and_si128(take, _mm_cmpeq_epi16(_mm_min_epu16(v, whiteBelow), v));  // v < white
+            _mm_storeu_si128(reinterpret_cast<__m128i*>(p), _mm_blendv_epi8(v, scaled, take));
+        }
+    }
+}
+
+bool HasSse41() {
+    static const bool has = [] {
+#if defined(_MSC_VER)
+        int info[4];
+        __cpuid(info, 1);
+        return (info[2] & (1 << 19)) != 0;
+#else
+        return __builtin_cpu_supports("sse4.1") != 0;
+#endif
+    }();
+    return has;
+}
+#endif
+
+std::atomic<bool> g_simd{true};
+
 void ApplyStripes(const Stripes& s, uint16_t* img, int black, int whiteLevel, int width, int height) {
+#if RAWFIX_SSE41
+    // SSE4.1 (every x64 CPU Windows 11 runs on): the same values, ~4x faster.
+    if (g_simd.load(std::memory_order_relaxed) && HasSse41() && whiteLevel * 2 / 3 >= 1) {
+        const int white = std::max(whiteLevel * 2 / 3, BrightestSse41(img, width, height));
+        ApplyStripesSse41(s.coefficients, img, black, white, width, height);
+        return;
+    }
+#endif
     // The exact white level: a gross under-estimate, raised to the brightest pixel.
     int white = whiteLevel * 2 / 3;
     const int groups = width / 8;
@@ -173,6 +266,10 @@ void ApplyStripes(const Stripes& s, uint16_t* img, int black, int whiteLevel, in
 }
 
 }  // namespace
+
+void setSimd(bool on) {
+    g_simd.store(on, std::memory_order_relaxed);
+}
 
 void stripeFactors(const mlv::Clip& clip, const uint16_t* image, bool onePass, double out[8]) {
     const int w = clip.width(), h = clip.height();
