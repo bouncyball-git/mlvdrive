@@ -71,7 +71,7 @@ optional BMD-style name `<name>_1_YYYY-MM-DD_0001_C0000`.
 ## Architecture
 
 ```
-mlvdrive.exe  (console app; later a tray app)
+mlvdrive_tray.exe (tray app) / mlvdrive.exe (console), on app/settings + app/mounter
  ├─ fs/winfsp_fs     WinFsp native API (FSP_FILE_SYSTEM_INTERFACE), read-only volume
  ├─ vfs/tree         the virtual tree: MLV folder → clip folders → DNG/WAV entries,
  │                   sizes and timestamps known without generating anything
@@ -231,11 +231,29 @@ in Resolve.
      1500 files, timecodes 10:00:00:00 to 10:00:59:24, each chart's image equal to the CLI's,
      128 frames/s reading in order, alongside MLV clips in one mount.
    - Packed / LJ92 DNG on the drive (see "DNG output") wait for the Resolve questions.
-7. **Usability**:
-   - Install script (copy exe, Start Menu shortcut).
-   - Settings: command line + `mlvdrive.ini` (raw corrections, chroma smoothing, bad
-     pixels, DNG format, cache size).
-   - A tray icon with mount/unmount.
+7. **Usability** (done):
+   - Settings: `%APPDATA%\MLV Drive\mlvdrive.ini` (UTF-8; `src/app/settings`): folder, drive,
+     test patterns, mount at start, DNG format, raw fixes, timecode, cache, read-ahead. The
+     console program takes it as defaults (options override; `mlvdrive mount` alone works).
+   - `src/app/mounter`: tree + cache + drive as one object, used by both programs (library
+     `mlvdrive_app` with the WinFsp layer).
+   - Tray app `mlvdrive_tray.exe` (Win32, no console; `src/tray`): colour / grey icon
+     (mounted / not; `tools/make_icons.py` -> `assets/`), menu: mount, unmount, open in
+     Explorer (or double-click), MLV folder (folder picker), drive letter (letters in use
+     greyed), DNG format, raw corrections, timecode, test patterns, mount at start, start with
+     Windows (HKCU Run), edit / reload the settings file, quit. Mounting on a worker thread; a
+     change while mounted remounts; balloons for errors, skipped clips and first run; one
+     instance; icon back after Explorer restarts; `mlvdrive unmount M:` reaches it (the same
+     named event). Manifest: common controls 6, per-monitor DPI.
+   - `build.ps1 install | uninstall`: per user, no administrator rights:
+     `%LOCALAPPDATA%\Programs\MLV Drive`, Start Menu "MLV Drive", warns without WinFsp; stops a
+     running copy first (its Quit, then force after 5 s); uninstall removes "Start with
+     Windows" too and keeps the settings.
+   - Checked: the tray app mounts at start from the settings, every menu action (sent as its
+     command) changes the drive and the file as it should, quit unmounts; the console mounts
+     from the file alone; install / uninstall / reinstall while running.
+   - Not done: chroma smoothing and bad pixels as settings (the fixer has them; their defaults
+     stay); the cache policy for long clips and a RAM-sized default (proposed, not built).
 8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).
 
 **Resolve, later** (when the user wants to run it): import `M:\<clip>` as one clip with the

@@ -73,12 +73,29 @@ if(WIN32)
         set(_winfsp_arch x64)
     endif()
 
-    add_executable(mlvdrive src/main.cpp src/fs/winfsp_fs.cpp)
-    target_include_directories(mlvdrive PRIVATE "${WINFSP_DIR}/inc")
-    target_link_libraries(mlvdrive PRIVATE mlv_vfs "${WINFSP_DIR}/lib/winfsp-${_winfsp_arch}.lib" delayimp advapi32)
-    target_link_options(mlvdrive PRIVATE "/DELAYLOAD:winfsp-${_winfsp_arch}.dll")
-    target_compile_definitions(mlvdrive PRIVATE UNICODE _UNICODE)
+    # The drive, the settings file and mounting: shared by the console program and the tray app.
+    add_library(mlvdrive_app STATIC src/fs/winfsp_fs.cpp src/app/settings.cpp src/app/mounter.cpp)
+    target_include_directories(mlvdrive_app PRIVATE "${WINFSP_DIR}/inc")
+    target_compile_definitions(mlvdrive_app PUBLIC UNICODE _UNICODE)
+    target_compile_options(mlvdrive_app PRIVATE /W3)
+    target_link_libraries(mlvdrive_app PUBLIC mlv_vfs "${WINFSP_DIR}/lib/winfsp-${_winfsp_arch}.lib" delayimp
+                                              advapi32 shell32 ole32)
+    target_link_options(mlvdrive_app INTERFACE "/DELAYLOAD:winfsp-${_winfsp_arch}.dll")
+
+    # mlvdrive: the console program
+    add_executable(mlvdrive src/main.cpp)
+    target_link_libraries(mlvdrive PRIVATE mlvdrive_app)
     target_compile_options(mlvdrive PRIVATE /W3)
+
+    # mlvdrive_tray: the tray app (no console), its icons, manifest and version from tray.rc
+    set(MLVDRIVE_ICON_ON "${CMAKE_CURRENT_SOURCE_DIR}/assets/mlvdrive.ico")
+    set(MLVDRIVE_ICON_OFF "${CMAKE_CURRENT_SOURCE_DIR}/assets/mlvdrive_off.ico")
+    set(MLVDRIVE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/tray/tray.manifest")
+    configure_file(src/tray/tray.rc.in "${CMAKE_CURRENT_BINARY_DIR}/tray.rc" @ONLY)
+    add_executable(mlvdrive_tray WIN32 src/tray/tray.cpp "${CMAKE_CURRENT_BINARY_DIR}/tray.rc")
+    target_link_libraries(mlvdrive_tray PRIVATE mlvdrive_app comctl32)
+    target_link_options(mlvdrive_tray PRIVATE /MANIFEST:NO)  # tray.rc has it
+    target_compile_options(mlvdrive_tray PRIVATE /W3)
 endif()
 
 # --- mlvdrive_cli: clip info, one DNG to disk, timings ---

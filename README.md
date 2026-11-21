@@ -10,18 +10,54 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 [WinFsp](https://winfsp.dev/rel/) with its Developer feature:
 
 ```
-.\build.ps1            # build\mlvdrive.exe, build\mlvdrive_cli.exe
+.\build.ps1             # build\mlvdrive_tray.exe, build\mlvdrive.exe, build\mlvdrive_cli.exe
 .\build.ps1 clean build
+.\build.ps1 install     # for the current user (no administrator rights): the programs into
+                        # %LOCALAPPDATA%\Programs\MLV Drive, a Start Menu shortcut "MLV Drive"
+.\build.ps1 uninstall   # removes them (the settings stay)
 ```
 
-## Mounting
+`tools/make_icons.py` draws the icons in `assets/` (only needed to change them).
+
+## The tray app
+
+"MLV Drive" (`mlvdrive_tray.exe`) sits in the notification area: its icon is in colour while the
+drive is mounted, grey when not. Right-click (or click) it for the menu: mount and unmount, open the
+drive in Explorer (double-click does too), choose the MLV folder, the drive letter, the DNG format,
+raw corrections, timecode and the test patterns, mount when it starts, start with Windows, edit the
+settings file. A change while mounted mounts again with it. WinFsp must be installed
+(https://winfsp.dev/rel/); the menu says so if it isn't.
+
+## Settings
+
+`%APPDATA%\MLV Drive\mlvdrive.ini` (UTF-8), written by the tray app, read by both programs:
 
 ```
-mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--timecode=time|count]
+[mount]
+folder = E:\mlv             ; the MLV folder (subfolders included)
+drive = M:                  ; empty: the next free letter from Z: down
+test_patterns = false
+mount_at_start = true       ; the tray app mounts when it starts
+[dng]
+format = 16                 ; 16 or packed
+raw_fixes = true            ; stripes, focus and bad pixels
+timecode = time             ; time (of day) or count (from 00:00:00:00)
+[performance]
+cache_mb = 512              ; finished frames kept in memory
+read_ahead = auto           ; auto (one per CPU) or a number of frames
+```
+
+## Mounting from the command line
+
+```
+mlvdrive mount [MLV folder] [M:] [--dng=16|packed] [--no-fix|--fix] [--timecode=time|count]
                [--test-patterns] [--cache=MB] [--read-ahead=N] [--debug]
 mlvdrive mount --test-patterns [M:]
 mlvdrive unmount M:
 ```
+
+The settings file gives the defaults (with a folder set there, `mlvdrive mount` alone mounts it);
+the options override them. `mlvdrive unmount M:` also unmounts the tray app's drive.
 
 `--test-patterns` adds a `TestPatterns` folder of 12 test charts, 5 seconds each (1080p25,
 timecode from 10:00:00:00): SMPTE RP 219 HD bars, SMPTE bars, EBU 100% and 75% bars, PLUGE, grey

@@ -1,24 +1,20 @@
-// mlvdrive: shows the MLV clips under a folder as a drive of CinemaDNG sequences.
+// mlvdrive: shows the MLV clips under a folder as a drive of CinemaDNG sequences (console).
 //
-//   mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--timecode=time|count]
-//                  [--cache=MB] [--read-ahead=N] [--debug]
+//   mlvdrive mount [MLV folder] [M:] [options]
 //   mlvdrive unmount <M:>
 //
-// mount runs until Ctrl+C, the console is closed or `mlvdrive unmount` is run, then unmounts.
-#include "fs/winfsp_fs.h"
+// mount takes its defaults from the settings file (app/settings.h; the tray app writes it) and
+// runs until Ctrl+C, the console is closed or `mlvdrive unmount` is run, then unmounts.
+#include "app/mounter.h"
+#include "app/settings.h"
 #include "parallel.h"
-#include "vfs/frame_cache.h"
-#include "vfs/tree.h"
 
 #include <windows.h>
 
-#include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cwchar>
 #include <cwctype>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -30,32 +26,16 @@ BOOL WINAPI onConsoleEvent(DWORD) {
     return TRUE;
 }
 
-// The event a mount waits on, named after its mount point: `mlvdrive unmount` sets it.
-std::wstring stopEventName(std::wstring mountPoint) {
-    for (auto& ch : mountPoint) {
-        if (ch == L':' || ch == L'\\' || ch == L'/') ch = L'_';
-        else ch = wchar_t(std::towupper(wint_t(ch)));
-    }
-    return L"Local\\MLVDrive-stop-" + mountPoint;
-}
-
-std::string narrow(const std::wstring& w) {
-    if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), n, nullptr, nullptr);
-    return s;
-}
-
 int usage() {
     std::fprintf(stderr,
-                 "usage: mlvdrive mount <MLV folder> [M:] [options]\n"
+                 "usage: mlvdrive mount [MLV folder] [M:] [options]\n"
                  "       mlvdrive unmount <M:>\n"
-                 "  Shows every MLV clip under the folder as a folder of DNG files (default drive: the\n"
-                 "  next free letter from Z: down). Ctrl+C unmounts.\n"
+                 "  Shows every MLV clip under the folder as a folder of DNG files. The folder, the drive\n"
+                 "  letter and the options default to the settings file:\n"
+                 "    %s\n"
                  "  --dng=16         16-bit uncompressed DNG (the default)\n"
                  "  --dng=packed     uncompressed, packed to the clip's bit depth (smaller)\n"
-                 "  --no-fix         no raw corrections (stripes, focus and bad pixels)\n"
+                 "  --no-fix         no raw corrections (stripes, focus and bad pixels); --fix: with them\n"
                  "  --timecode=time  DNG timecode and WAV time reference: the time of day the clip was\n"
                  "                   recorded (the default; clips line up by when they were shot)\n"
                  "  --timecode=count the frames from the start of the clip (00:00:00:00)\n"
@@ -65,8 +45,13 @@ int usage() {
                  "  --cache=MB       frames kept made (default 512)\n"
                  "  --read-ahead=N   frames made ahead of the one read (default: one per CPU; 0: none)\n"
                  "  --debug          log every file system request\n"
-                 "  Ctrl+C or `mlvdrive unmount M:` unmounts.\n");
+                 "  Ctrl+C or `mlvdrive unmount M:` unmounts.\n",
+                 app::narrow(app::settingsPath()).c_str());
     return 2;
+}
+
+bool isDriveLetter(const std::wstring& s) {
+    return (s.size() == 1 || (s.size() == 2 && s[1] == L':')) && std::iswalpha(wint_t(s[0]));
 }
 
 }  // namespace
@@ -74,25 +59,25 @@ int usage() {
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
     if (argc == 3 && std::wstring(argv[1]) == L"unmount") {
-        std::wstring at = argv[2];
-        if (at.size() == 1) at += L':';
-        HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, stopEventName(at).c_str());
+        const std::wstring at = app::normalizeDrive(argv[2]);
+        HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, app::stopEventName(at).c_str());
         if (!e) {
-            std::fprintf(stderr, "nothing mounted on %s by mlvdrive\n", narrow(at).c_str());
+            std::fprintf(stderr, "nothing mounted on %s by MLV Drive\n", app::narrow(at).c_str());
             return 1;
         }
         SetEvent(e);
         CloseHandle(e);
-        std::printf("unmounting %s\n", narrow(at).c_str());
+        std::printf("unmounting %s\n", app::narrow(at).c_str());
         return 0;
     }
-    if (argc < 3 || std::wstring(argv[1]) != L"mount") return usage();
+    if (argc < 2 || std::wstring(argv[1]) != L"mount") return usage();
+
+    std::vector<std::string> warnings;
+    app::Settings s = app::loadSettings(app::settingsPath(), &warnings);
+    for (const auto& w : warnings) std::fprintf(stderr, "%s\n", w.c_str());
 
     std::vector<std::wstring> positional;
-    vfs::BuildOptions options;
     bool debug = false;
-    const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
-    unsigned long cacheMb = 512, readAhead = cpus;
     auto number = [](const std::wstring& a, size_t at, unsigned long* out) {
         wchar_t* end = nullptr;
         *out = std::wcstoul(a.c_str() + at, &end, 10);
@@ -100,73 +85,65 @@ int wmain(int argc, wchar_t** argv) {
     };
     for (int i = 2; i < argc; ++i) {
         std::wstring a = argv[i];
+        unsigned long v = 0;
         if (a.rfind(L"--cache=", 0) == 0) {
-            if (!number(a, 8, &cacheMb)) return usage();
+            if (!number(a, 8, &v) || v < 16) return usage();
+            s.cacheMb = unsigned(v);
         } else if (a.rfind(L"--read-ahead=", 0) == 0) {
-            if (!number(a, 13, &readAhead)) return usage();
-        } else if (a == L"--dng=16") options.dng.output = dng::Output::Uncompressed16;
-        else if (a == L"--dng=packed") options.dng.output = dng::Output::Uncompressed;
-        else if (a == L"--no-fix") options.fix = false;
-        else if (a == L"--timecode=time") options.dng.timecode = dng::Timecode::TimeOfDay;
-        else if (a == L"--timecode=count") options.dng.timecode = dng::Timecode::FrameCount;
-        else if (a == L"--test-patterns") options.testPatterns = true;
+            if (!number(a, 13, &v)) return usage();
+            s.readAhead = int(v);
+        } else if (a == L"--dng=16") s.format = dng::Output::Uncompressed16;
+        else if (a == L"--dng=packed") s.format = dng::Output::Uncompressed;
+        else if (a == L"--no-fix") s.rawFixes = false;
+        else if (a == L"--fix") s.rawFixes = true;
+        else if (a == L"--timecode=time") s.timecode = dng::Timecode::TimeOfDay;
+        else if (a == L"--timecode=count") s.timecode = dng::Timecode::FrameCount;
+        else if (a == L"--test-patterns") s.testPatterns = true;
         else if (a == L"--debug") debug = true;
         else if (a.rfind(L"--", 0) == 0) return usage();
         else positional.push_back(a);
     }
-    // With --test-patterns the MLV folder may be left out: `mlvdrive mount --test-patterns [M:]`.
-    auto isDriveLetter = [](const std::wstring& s) {
-        return (s.size() == 1 || (s.size() == 2 && s[1] == L':')) && std::iswalpha(s[0]);
-    };
-    if (options.testPatterns && positional.size() <= 1 && (positional.empty() || isDriveLetter(positional[0])))
-        positional.insert(positional.begin(), L"");
-    if (positional.empty() || positional.size() > 2) return usage();
-    const std::wstring source = positional[0];
-    std::wstring mountPoint = positional.size() == 2 ? positional[1] : L"";
-    if (mountPoint.size() == 1) mountPoint += L':';  // "M" -> "M:"
+    // [folder] [M:]: a lone drive letter is the drive, anything else the folder (replacing the
+    // settings').
+    if (positional.size() > 2) return usage();
+    if (positional.size() == 2) {
+        s.folder = positional[0];
+        s.drive = app::normalizeDrive(positional[1]);
+    } else if (positional.size() == 1) {
+        if (isDriveLetter(positional[0])) s.drive = app::normalizeDrive(positional[0]);
+        else s.folder = positional[0];
+    }
+    if (s.folder.empty() && !s.testPatterns) {
+        std::fprintf(stderr, "no MLV folder: give one, or set folder = in %s\n\n",
+                     app::narrow(app::settingsPath()).c_str());
+        return usage();
+    }
 
+    app::Mounter mounter;
     std::string error;
-    if (!fsys::Drive::loadWinFsp(&error)) {
+    if (!mounter.mount(s, debug, [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); }, &error)) {
         std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-
-    auto t0 = std::chrono::steady_clock::now();
-    vfs::Tree tree;
-    if (!tree.build(source, options, [](const std::string& m) { std::fprintf(stderr, "%s\n", m.c_str()); }, &error)) {
-        std::fprintf(stderr, "%s\n", error.c_str());
-        return 1;
-    }
-    double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    if (tree.clipCount() == 0) {
-        std::fprintf(stderr, "no MLV clips under %s\n", narrow(source).c_str());
-        return 1;
-    }
-
-    vfs::FrameCache cache(uint64_t(cacheMb) << 20, readAhead ? cpus : 0, unsigned(readAhead));
-    fsys::Drive drive(tree, cache);
-    if (!drive.mount(mountPoint, debug, &error)) {
-        std::fprintf(stderr, "%s\n", error.c_str());
-        return 1;
-    }
-    const std::string what = source.empty() ? std::string("test patterns") : narrow(source);
-    std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", what.c_str(), tree.clipCount(),
-                tree.clipCount() == 1 ? "" : "s", tree.totalBytes() / 1e9, ms);
-    std::printf("Mounted on %s (cache %lu MB, read-ahead %lu). Ctrl+C unmounts.\n", narrow(drive.mountPoint()).c_str(),
-                cacheMb, readAhead);
+    const app::MountInfo& info = mounter.info();
+    const std::string what = s.folder.empty() ? std::string("test patterns") : app::narrow(s.folder);
+    std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", what.c_str(), info.clips,
+                info.clips == 1 ? "" : "s", info.bytes / 1e9, info.openMs);
+    std::printf("Mounted on %s (cache %u MB, read-ahead %u). Ctrl+C unmounts.\n", app::narrow(info.mountPoint).c_str(),
+                info.cacheMb, info.readAhead);
     std::fflush(stdout);
 
-    g_stop = CreateEventW(nullptr, TRUE, FALSE, stopEventName(drive.mountPoint()).c_str());
+    g_stop = CreateEventW(nullptr, TRUE, FALSE, app::stopEventName(info.mountPoint).c_str());
     SetConsoleCtrlHandler(onConsoleEvent, TRUE);
     WaitForSingleObject(g_stop, INFINITE);
 
     std::printf("Unmounting.\n");
-    drive.unmount();
-    const auto s = cache.stats();
+    const auto st = mounter.stats();
+    mounter.unmount();
     std::printf("frames: %llu made for a reader, %llu found made, %llu waited for; read-ahead made %llu, read %llu, "
                 "dropped %llu\n",
-                (unsigned long long)s.misses, (unsigned long long)s.hits, (unsigned long long)s.waits,
-                (unsigned long long)s.readAhead, (unsigned long long)s.readAheadUsed, (unsigned long long)s.dropped);
+                (unsigned long long)st.misses, (unsigned long long)st.hits, (unsigned long long)st.waits,
+                (unsigned long long)st.readAhead, (unsigned long long)st.readAheadUsed, (unsigned long long)st.dropped);
     par::shutdown();
     return 0;
 }
