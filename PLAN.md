@@ -137,7 +137,7 @@ in Resolve.
      develops them identically, right way up, natural colour.
    - Test clip, one thread: decode 8.3 ms + corrections 3.9 ms, whole 16-bit DNG 12.3 ms;
      8 threads: 400 frames/s 16-bit (17x real time), 267 packed, 186 LJ92, 1420 pass-through.
-   - **To do:** import a DNG (and the sequence) in Resolve: colour, orientation, raw controls.
+   - Resolve check moved to later (see "Resolve, later" below); a viewer is enough for now.
 3. **WinFsp mount, read-only, no cache** (done but for the Resolve check):
    - `mlvdrive mount <folder> [M:] [--dng=16|packed] [--no-fix] [--debug]`; no letter: the
      next free one from Z: down. Ctrl+C unmounts.
@@ -157,9 +157,13 @@ in Resolve.
      `mlvdrive_cli dng`; nested folders, the name clash, case-insensitive lookups, wrong frame
      names, writes refused. Reading the sequence in order: 44.5 frames/s (176 MB/s, 1.9x real
      time) made on the drive, 969 frames/s again from Windows' cache.
-   - **To do:** Resolve: the folder imports as one clip with the right frame rate and
-     duration, raw controls in Camera Raw, playback.
-4. **Speed**: LRU cache, read-ahead, WinFsp tuning.
+   - Acceptance for now: browse the virtual folders in Explorer and open the DNGs in a viewer
+     (LibRaw develops frames read from the drive correctly). Resolve comes later.
+   - **Found after:** an open file's frame lives until WinFsp's Close, which with Windows
+     caching file data comes only when the cache drops the file: the process grew to ~1 GB
+     (every frame read). Fix first in milestone 4: free it at Cleanup.
+4. **Speed**: free a file's frame at Cleanup (`PostCleanupWhenModifiedOnly = 0`), LRU cache,
+   read-ahead, WinFsp tuning.
    - Measure: frames/s reading a mounted sequence (a CLI reader, then Resolve playback).
    - Target: real-time 1080p24 with corrections, and as close as possible at UHD.
 5. **Audio + timecode**: `<name>.wav` (BWF with the clip's timecode, mlvtoolbox `wav.cpp`),
@@ -172,6 +176,10 @@ in Resolve.
      pixels, DNG format, cache size).
    - A tray icon with mount/unmount.
 8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).
+
+**Resolve, later** (when the user wants to run it): import `M:\<clip>` as one clip with the
+right frame rate and duration, CinemaDNG raw controls, playback in real time; then the open
+questions below (packed / LJ92 DNG, naming, write access).
 
 ## Testing
 
