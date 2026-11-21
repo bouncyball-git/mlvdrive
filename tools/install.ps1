@@ -50,11 +50,13 @@ if ($Uninstall) {
     return
 }
 
-$programs = 'mlvdrive_tray.exe', 'mlvdrive.exe', 'mlvdrive_cli.exe'
+$programs = 'mlvdrive_tray.exe', 'mlvdrive.exe', 'mlvdrive_tool.exe'
 foreach ($p in $programs) { if (-not (Test-Path (Join-Path $From $p))) { throw "$p is missing from $From" } }
 Stop-Installed
 Step "install: $InstallDir"
 New-Item -ItemType Directory -Force $InstallDir | Out-Null
+# Programs since renamed (mlvdrive_cli.exe is mlvdrive_tool.exe since 0.2.0).
+foreach ($old in 'mlvdrive_cli.exe') { Remove-Item (Join-Path $InstallDir $old) -Force -ErrorAction SilentlyContinue }
 $items = $programs + 'pixelmaps', 'README.md', 'LICENSE', 'install.ps1', 'install.cmd', 'uninstall.cmd' |
     Where-Object { Test-Path (Join-Path $From $_) }
 foreach ($i in $items) { Copy-Item (Join-Path $From $i) $InstallDir -Recurse -Force }

@@ -10,7 +10,7 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 [WinFsp](https://winfsp.dev/rel/) with its Developer feature:
 
 ```
-.\build.ps1             # build\mlvdrive_tray.exe, build\mlvdrive.exe, build\mlvdrive_cli.exe
+.\build.ps1             # build\mlvdrive_tray.exe, build\mlvdrive.exe, build\mlvdrive_tool.exe
 .\build.ps1 clean build
 .\build.ps1 install     # for the current user (no administrator rights): the programs into
                         # %LOCALAPPDATA%\Programs\MLV Drive, a Start Menu shortcut "MLV Drive"
@@ -107,21 +107,21 @@ used. Ctrl+C (or `mlvdrive unmount`) unmounts. WinFsp must be installed where it
 Frames read in order are made ahead on every CPU (`--read-ahead`, default one per CPU, 0 off) and
 kept in a cache (`--cache`, default 512 MB).
 
-`mlvdrive_cli` runs the core without the drive:
+`mlvdrive_tool` runs the core without the drive:
 
 ```
-mlvdrive_cli info  <clip.MLV> [frame]             clip details, one frame decoded (timings)
-mlvdrive_cli dng   <clip.MLV> <frame> <out.dng>   one frame as a DNG
-mlvdrive_cli check <clip.MLV> <frame> <file.dng>  a DNG read back and compared with the frame
-mlvdrive_cli bench <clip.MLV> [frames]            ms a frame per stage, frames/s on every thread
+mlvdrive_tool info  <clip.MLV> [frame]             clip details, one frame decoded (timings)
+mlvdrive_tool dng   <clip.MLV> <frame> <out.dng>   one frame as a DNG
+mlvdrive_tool check <clip.MLV> <frame> <file.dng>  a DNG read back and compared with the frame
+mlvdrive_tool bench <clip.MLV> [frames]            ms a frame per stage, frames/s on every thread
     --dng=16|packed|lj92|pass   DNG format (default 16-bit)    --no-fix   no raw corrections
-mlvdrive_cli wav   <clip.MLV> <out.wav>           the clip's audio, as the drive shows it
-mlvdrive_cli patterns <folder>                    one DNG of each test pattern (01.dng ... 12.dng)
+mlvdrive_tool wav   <clip.MLV> <out.wav>           the clip's audio, as the drive shows it
+mlvdrive_tool patterns <folder>                    one DNG of each test pattern (01.dng ... 12.dng)
     --timecode=time|count (dng, wav)   timecode: time of day (default) or from 00:00:00:00
-mlvdrive_cli selftest <clip.MLV>                  every frame: fast decoder and vector corrections
-                                                  against the original code, value for value;
-                                                  the audio read in pieces against read whole
-mlvdrive_cli read  <folder>                       reads a mounted clip's DNGs in order: frames/s
+mlvdrive_tool selftest <clip.MLV>                  every frame: fast decoder and vector corrections
+                                                   against the original code, value for value;
+                                                   the audio read in pieces against read whole
+mlvdrive_tool read  <folder>                       reads a mounted clip's DNGs in order: frames/s
     --threads=N  readers (default 1)   --passes=N (default 2)   --buffered  through Windows' cache
 ```
 

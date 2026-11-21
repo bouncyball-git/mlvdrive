@@ -5,12 +5,12 @@
 # The clips come from the folders (subfolders included): the shortest of each kind (camera, size,
 # bit depth, compression) and the shortest spanned one (.MLV + .M00 ...). Tests:
 #
-#   clips      every clip opens and decodes (mlvdrive_cli info)
+#   clips      every clip opens and decodes (mlvdrive_tool info)
 #   selftest   per kind: every frame, fast decoder = original, vector fixes = scalar, audio by range
 #   formats    one frame as 16-bit, packed, LJ92 and pass-through DNG, each read back and compared
 #   patterns   the 12 test charts are written
 #   drive      a mount (on -Drive) of the folders + test patterns: every clip's middle frame equals a
-#              fresh decode, a WAV equals mlvdrive_cli's, a chart's image equals the CLI's
+#              fresh decode, a WAV equals mlvdrive_tool's, a chart's image equals mlvdrive_tool's
 #   cache      a clip longer than the cache (512 MB) read twice: frames from the first pass found
 #              made on the second; read speed above real time
 #   live       a scratch folder mounted and watched: a clip copied in appears, one replaced by other
@@ -26,7 +26,7 @@ param(
     [switch] $Keep  # keep the scratch folder (to look at what failed)
 )
 $ErrorActionPreference = 'Stop'
-$cli = Join-Path $Bin 'mlvdrive_cli.exe'
+$cli = Join-Path $Bin 'mlvdrive_tool.exe'
 $mount = Join-Path $Bin 'mlvdrive.exe'
 foreach ($p in $cli, $mount) { if (-not (Test-Path $p)) { throw "$p is missing: build first" } }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ("mlvdrive-test-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -170,11 +170,11 @@ try {
             $wav = Join-Path $scratch 'audio.wav'
             & $cli wav $withAudio.Path $wav | Out-Null
             $same = (Hash $wav) -eq (Hash (Join-Path $dir "$name.wav"))
-            Result 'drive' $same ("{0}.wav on the drive equals mlvdrive_cli wav" -f $name)
+            Result 'drive' $same ("{0}.wav on the drive equals mlvdrive_tool wav" -f $name)
         }
         $chart = ImageHash "$Drive\TestPatterns\TestPatterns_000125.dng" (1920 * 1080 * 2)
         $cliChart = ImageHash (Join-Path $pat '02.dng') (1920 * 1080 * 2)
-        Result 'drive' ($chart -eq $cliChart) 'TestPatterns frame 125 (chart 2) equals the CLI''s chart'
+        Result 'drive' ($chart -eq $cliChart) 'TestPatterns frame 125 (chart 2) equals mlvdrive_tool''s chart'
 
         # --- cache: a clip longer than the 512 MB cache, read twice ---
         Section 'cache'

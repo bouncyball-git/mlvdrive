@@ -6,7 +6,7 @@
 #   build      configures (if needed) and builds (the default action):
 #                build\mlvdrive_tray.exe  the tray app (MLV Drive in the notification area)
 #                build\mlvdrive.exe       the drive on the command line
-#                build\mlvdrive_cli.exe   the core on the command line (clip info, DNGs, timings)
+#                build\mlvdrive_tool.exe   the core on the command line (clip info, DNGs, timings)
 #   install    for the current user, no administrator rights (tools\install.ps1): the programs into
 #              %LOCALAPPDATA%\Programs\MLV Drive, a Start Menu shortcut "MLV Drive" (the tray app);
 #              stops a running copy first. WinFsp must be installed separately (https://winfsp.dev/rel/)
@@ -42,7 +42,7 @@ function Get-Version {
 # README and LICENSE, the installer.
 function New-Stage {
     $stage = Join-Path $BuildDir 'stage'
-    $programs = 'mlvdrive_tray.exe', 'mlvdrive.exe', 'mlvdrive_cli.exe' | ForEach-Object { Join-Path $BuildDir $_ }
+    $programs = 'mlvdrive_tray.exe', 'mlvdrive.exe', 'mlvdrive_tool.exe' | ForEach-Object { Join-Path $BuildDir $_ }
     foreach ($f in $programs) { if (-not (Test-Path $f)) { throw "no $f : build first" } }
     if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
     New-Item -ItemType Directory -Force $stage | Out-Null

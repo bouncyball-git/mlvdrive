@@ -101,11 +101,11 @@ if(WIN32)
     target_compile_options(mlvdrive_tray PRIVATE /W3)
 endif()
 
-# --- mlvdrive_cli: clip info, one DNG to disk, timings ---
-add_executable(mlvdrive_cli tools/cli.cpp)
-target_link_libraries(mlvdrive_cli PRIVATE mlv_vfs)
+# --- mlvdrive_tool: clip info, one DNG to disk, timings ---
+add_executable(mlvdrive_tool tools/mlvdrive_tool.cpp)
+target_link_libraries(mlvdrive_tool PRIVATE mlv_vfs)
 if(MSVC)
-    target_compile_options(mlvdrive_cli PRIVATE /W3)
+    target_compile_options(mlvdrive_tool PRIVATE /W3)
 endif()
 
 # MLV-App's focus pixel maps (third_party/mlvapp/pixelmaps), beside the programs: looked up there

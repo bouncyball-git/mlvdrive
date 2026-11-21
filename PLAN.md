@@ -78,7 +78,7 @@ mlvdrive_tray.exe (tray app) / mlvdrive.exe (console), on app/settings + app/mou
  ├─ dng/writer       DNG header (fixed size per clip) + image data
  ├─ cache/frames     generated frames: LRU by bytes (e.g. 1 GB), read-ahead on the pool
  ├─ mlv/, raw/, util/, parallel   (copied, see above)
- └─ tools/cli        mlvdrive_cli: write one DNG to disk, bench a clip, dump the tree
+ └─ tools/mlvdrive_tool  mlvdrive_tool: write one DNG to disk, bench a clip, dump the tree
 ```
 
 - **Mount:** `mlvdrive mount <MLV folder> [M:]`. Scan the folder (and subfolders) once, open
@@ -125,13 +125,13 @@ in Resolve.
      (`inc\winfsp\winfsp.h`, `lib\winfsp-x64.lib`).
 1. **Copy the core** (done): the table above, as CMake libraries `mlvapp_c` and `mlv_core`
    (which includes the thread pool). Change markers in `third_party/mlvapp` read "MLV Drive".
-   `mlvdrive_cli info <clip> [frame]` checks it: the test clip opens with the right metadata;
+   `mlvdrive_tool info <clip> [frame]` checks it: the test clip opens with the right metadata;
    one frame decodes in ~8-11 ms, corrections ~4-6 ms.
    - Note: focus/bad pixel maps (`.fpm`) are opened with `fopen` from the current folder
      until `pixelproc_open_map` is set (not needed for the 5D Mark III).
 2. **DNG writer + CLI** (done but for the Resolve check):
    - `src/dng/dng_writer` from mlvtoolbox, plus 16-bit output and rendering into memory.
-   - `mlvdrive_cli info | dng | check | bench`, `--dng=16|packed|lj92|pass`, `--no-fix`.
+   - `mlvdrive_tool info | dng | check | bench`, `--dng=16|packed|lj92|pass`, `--no-fix`.
    - Checked: `check` reads every format back equal to the decoded + corrected frame (and finds
      the difference against an uncorrected one); exiftool validates all four; LibRaw (rawpy)
      develops them identically, right way up, natural colour.
@@ -154,7 +154,7 @@ in Resolve.
    - The raw fixer now always measures stripes (and searches bad pixels) on frame 0, whatever
      frame comes first: before that, a frame's bytes depended on the order frames were read.
    - Checked: every frame read from the drive, in any order, is byte-identical to
-     `mlvdrive_cli dng`; nested folders, the name clash, case-insensitive lookups, wrong frame
+     `mlvdrive_tool dng`; nested folders, the name clash, case-insensitive lookups, wrong frame
      names, writes refused. Reading the sequence in order: 44.5 frames/s (176 MB/s, 1.9x real
      time) made on the drive, 969 frames/s again from Windows' cache.
    - Acceptance for now: browse the virtual folders in Explorer and open the DNGs in a viewer
@@ -173,13 +173,13 @@ in Resolve.
      (`PostCleanupWhenModifiedOnly = 0`); reads after it (from Windows' cache) fetch again.
      Memory now stays at the cache size (552 MB with 512 MB of cache; it grew to ~1 GB before).
    - `mlvdrive unmount M:` (a named event the mount waits on) unmounts cleanly and prints the
-     cache's counts; `mlvdrive_cli read <folder> [--threads=N] [--passes=N] [--buffered]`
+     cache's counts; `mlvdrive_tool read <folder> [--threads=N] [--passes=N] [--buffered]`
      reads a mounted sequence unbuffered (what the drive itself gives).
    - Test clip, 16-bit with corrections, unbuffered, one reader in order: 49.5 frames/s without
      read-ahead -> 142 frames/s first pass, 261 second (11x real time); 2 readers 268 (the CPU
      is the limit); every frame made ahead was read. Random order: 23 ms a frame. Frames made
      ahead are byte-identical (`check`).
-   - Making a frame faster (after milestone 4; output unchanged, `mlvdrive_cli selftest`
+   - Making a frame faster (after milestone 4; output unchanged, `mlvdrive_tool selftest`
      compares every frame value for value with the original decoder and the scalar fixes):
      - Stripe correction in SSE4.1 (run-time check, scalar otherwise; `raw::setSimd`): its two
        passes (brightest pixel 1.5 ms, factors 2.4 ms) were scalar compute, not memory (a plain
@@ -205,7 +205,7 @@ in Resolve.
      RTCI start time + frame number, counted at round(fps) (24 for 23.976, non-drop); the WAV's
      bext TimeReference = frame 0's timecode frame x rate / fps (MLV-App's formula), so the two
      mark the same moment. `Writer::timecodeFrame`, `frameRate` give the numbers.
-   - `mlvdrive_cli wav <clip> out.wav` writes the drive's WAV; `selftest` also compares the
+   - `mlvdrive_tool wav <clip> out.wav` writes the drive's WAV; `selftest` also compares the
      audio read in pieces with it read whole.
    - Checked on the test clip: audio 10.886 s = 261 frames at 23.976; frame 0 16:42:59:00,
      frame 260 16:43:09:20; TimeReference 2,891,483,483 = frame 1,444,296 = 16:42:59:00;
@@ -224,7 +224,7 @@ in Resolve.
    - `dng::generatedHeader`: a DNG whose camera RGB is linear Rec.709 (ColorMatrix1 = XYZ ->
      sRGB, D65; ForwardMatrix1 = sRGB -> XYZ D50; AsShotNeutral 1 1 1), Make "MLV Drive",
      Model "Test Pattern".
-   - `mlvdrive_cli patterns <folder>` writes one frame of each.
+   - `mlvdrive_tool patterns <folder>` writes one frame of each.
    - Checked: exiftool validates; LibRaw with Rec.709 gamma gives the charts' levels (EBU 75%
      bars 191/0, white 255; grey scale 0, 25, 51 ... 255); full-resolution looks right (the zone
      plate's colour moire past Nyquist is the Bayer sampling it is there to show); on the drive:
@@ -331,7 +331,7 @@ questions below (packed / LJ92 DNG, naming, write access).
   fixing is off by default and maps are looked up by camera, not by clip name.)
 - Correctness: the image data in a generated DNG must equal the decoded + corrected raw frame
   (a CLI check that reads the DNG back); the DNG must open in Resolve and another raw app.
-- Speed: `mlvdrive_cli bench` (per-stage ms), and a mounted-read benchmark (MB/s and frames/s
+- Speed: `mlvdrive_tool bench` (per-stage ms), and a mounted-read benchmark (MB/s and frames/s
   sequentially, cold and warm cache).
 
 ## Open questions

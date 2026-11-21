@@ -1,21 +1,21 @@
-// mlvdrive_cli: the core without a filesystem.
+// mlvdrive_tool: the core without a filesystem.
 //
-//   mlvdrive_cli info  <clip.MLV> [frame]               clip details; decodes one frame (timings)
-//   mlvdrive_cli dng   <clip.MLV> <frame> <out.dng>     writes one frame as a DNG
-//   mlvdrive_cli check <clip.MLV> <frame> <file.dng>    reads a DNG back: its image must equal the
-//                                                       frame decoded and corrected now
-//   mlvdrive_cli bench <clip.MLV> [frames]              ms a frame per stage, then frames/s on
-//                                                       every thread
-//   mlvdrive_cli wav   <clip.MLV> <out.wav>             the clip's audio as the drive shows it
-//   mlvdrive_cli patterns <folder>                      the first frame of each test pattern as
-//                                                       a DNG (01.dng ... 12.dng)
-//   mlvdrive_cli selftest <clip.MLV>                    every frame: the fast decoder against the
-//                                                       original one, the vector raw corrections
-//                                                       against the scalar ones (value for value);
-//                                                       the audio read in pieces against whole
-//   mlvdrive_cli read  <folder>                         reads every .dng in a folder (a clip's
-//                                                       folder on the drive) in name order:
-//                                                       frames/s, MB/s, ms a file
+//   mlvdrive_tool info  <clip.MLV> [frame]               clip details; decodes one frame (timings)
+//   mlvdrive_tool dng   <clip.MLV> <frame> <out.dng>     writes one frame as a DNG
+//   mlvdrive_tool check <clip.MLV> <frame> <file.dng>    reads a DNG back: its image must equal the
+//                                                        frame decoded and corrected now
+//   mlvdrive_tool bench <clip.MLV> [frames]              ms a frame per stage, then frames/s on
+//                                                        every thread
+//   mlvdrive_tool wav   <clip.MLV> <out.wav>             the clip's audio as the drive shows it
+//   mlvdrive_tool patterns <folder>                      the first frame of each test pattern as
+//                                                        a DNG (01.dng ... 12.dng)
+//   mlvdrive_tool selftest <clip.MLV>                    every frame: the fast decoder against the
+//                                                        original one, the vector raw corrections
+//                                                        against the scalar ones (value for value);
+//                                                        the audio read in pieces against whole
+//   mlvdrive_tool read  <folder>                         reads every .dng in a folder (a clip's
+//                                                        folder on the drive) in name order:
+//                                                        frames/s, MB/s, ms a file
 //
 // Options (dng, check, bench): --dng=16|packed|lj92|pass  (default 16), --no-fix (no raw corrections)
 // Options (dng, check, bench, selftest): --focus-pixels=auto|on|off, --bad-pixels=off|auto|aggressive|map
@@ -62,14 +62,14 @@ double msSince(Clock::time_point t0) {
 int usage() {
     std::fprintf(stderr,
                  "MLV Drive " MLVDRIVE_VERSION ", the core on the command line\n"
-                 "usage: mlvdrive_cli info  <clip.MLV> [frame]\n"
-                 "       mlvdrive_cli dng   <clip.MLV> <frame> <out.dng> [--dng=16|packed|lj92|pass] [--no-fix]\n"
-                 "       mlvdrive_cli check <clip.MLV> <frame> <file.dng> [--no-fix]\n"
-                 "       mlvdrive_cli bench <clip.MLV> [frames] [--dng=16|packed|lj92|pass] [--no-fix]\n"
-                 "       mlvdrive_cli wav   <clip.MLV> <out.wav> [--timecode=time|count]\n"
-                 "       mlvdrive_cli patterns <folder>\n"
-                 "       mlvdrive_cli selftest <clip.MLV>\n"
-                 "       mlvdrive_cli read  <folder> [--threads=N] [--passes=N] [--buffered]\n");
+                 "usage: mlvdrive_tool info  <clip.MLV> [frame]\n"
+                 "       mlvdrive_tool dng   <clip.MLV> <frame> <out.dng> [--dng=16|packed|lj92|pass] [--no-fix]\n"
+                 "       mlvdrive_tool check <clip.MLV> <frame> <file.dng> [--no-fix]\n"
+                 "       mlvdrive_tool bench <clip.MLV> [frames] [--dng=16|packed|lj92|pass] [--no-fix]\n"
+                 "       mlvdrive_tool wav   <clip.MLV> <out.wav> [--timecode=time|count]\n"
+                 "       mlvdrive_tool patterns <folder>\n"
+                 "       mlvdrive_tool selftest <clip.MLV>\n"
+                 "       mlvdrive_tool read  <folder> [--threads=N] [--passes=N] [--buffered]\n");
     return 2;
 }
 
