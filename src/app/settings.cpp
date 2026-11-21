@@ -2,7 +2,10 @@
 
 #include "util/file.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cwctype>
 #include <filesystem>
 #include <system_error>
@@ -39,6 +42,17 @@ std::wstring Wide(const std::string& utf8) { return util::u8(utf8).wstring(); }
 std::string Utf8(const std::wstring& w) { return util::u8(std::filesystem::path(w)); }
 
 }  // namespace
+
+unsigned cacheAutoMb() {
+    uint64_t total = 0;
+#ifdef _WIN32
+    MEMORYSTATUSEX m{};
+    m.dwLength = sizeof m;
+    if (GlobalMemoryStatusEx(&m)) total = m.ullTotalPhys;
+#endif
+    const uint64_t mb = (total >> 20) / 4;
+    return unsigned(std::clamp<uint64_t>(mb, 512, 16384));
+}
 
 std::wstring normalizeDrive(std::wstring drive) {
     if ((drive.size() == 1 || (drive.size() == 2 && drive[1] == L':')) && std::iswalpha(wint_t(drive[0])))
@@ -111,6 +125,19 @@ Settings loadSettings(const std::wstring& path, std::vector<std::string>* warnin
             if (v == "16") s.format = dng::Output::Uncompressed16;
             else if (v == "packed") s.format = dng::Output::Uncompressed;
             else ok = false;
+        } else if (key == "focus_pixels") {
+            const std::string v = Lower(value);
+            if (v == "auto") s.focusPixels = -1;
+            else if (v == "on") s.focusPixels = 1;
+            else if (v == "off") s.focusPixels = 0;
+            else ok = false;
+        } else if (key == "bad_pixels") {
+            const std::string v = Lower(value);
+            if (v == "off") s.badPixels = 0;
+            else if (v == "auto") s.badPixels = 1;
+            else if (v == "aggressive") s.badPixels = 2;
+            else if (v == "map") s.badPixels = 3;
+            else ok = false;
         } else if (key == "timecode") {
             const std::string v = Lower(value);
             if (v == "time") s.timecode = dng::Timecode::TimeOfDay;
@@ -119,7 +146,8 @@ Settings loadSettings(const std::wstring& path, std::vector<std::string>* warnin
         } else if (key == "cache_mb") {
             char* e = nullptr;
             const unsigned long v = std::strtoul(value.c_str(), &e, 10);
-            if (value.empty() || *e || v < 16 || v > 1u << 20) ok = false;
+            if (Lower(value) == "auto") s.cacheMb = 0;
+            else if (value.empty() || *e || v < 16 || v > 1u << 20) ok = false;
             else s.cacheMb = unsigned(v);
         } else if (key == "read_ahead") {
             if (Lower(value) == "auto") {
@@ -161,11 +189,16 @@ bool saveSettings(const std::wstring& path, const Settings& s, std::string* erro
     line("mount_at_start", s.mountAtStart ? "true" : "false", "the tray app mounts when it starts");
     t += std::string("[dng]") + nl;
     line("format", s.format == dng::Output::Uncompressed ? "packed" : "16", "16 or packed");
-    line("raw_fixes", s.rawFixes ? "true" : "false", "stripes, focus and bad pixels");
+    line("raw_fixes", s.rawFixes ? "true" : "false", "raw corrections at all");
+    line("focus_pixels", s.focusPixels < 0 ? "auto" : s.focusPixels ? "on" : "off",
+         "auto (cameras with them, clips with their own .fpm), on, off");
+    static const char* const bad[] = {"off", "auto", "aggressive", "map"};
+    line("bad_pixels", bad[std::clamp(s.badPixels, 0, 3)], "off, auto, aggressive, map (.bpm)");
     line("timecode", s.timecode == dng::Timecode::FrameCount ? "count" : "time",
          "time (of day) or count (from 00:00:00:00)");
     t += std::string("[performance]") + nl;
-    line("cache_mb", std::to_string(s.cacheMb), "finished frames kept in memory");
+    line("cache_mb", s.cacheMb ? std::to_string(s.cacheMb) : std::string("auto"),
+         "finished frames kept: auto (a quarter of the RAM) or MB");
     line("read_ahead", s.readAhead < 0 ? std::string("auto") : std::to_string(s.readAhead),
          "auto (one per CPU) or a number of frames");
     return util::writeFile(Utf8(path), t.data(), t.size(), nullptr, 0, error);

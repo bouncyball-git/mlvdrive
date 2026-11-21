@@ -15,17 +15,25 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 .\build.ps1 install     # for the current user (no administrator rights): the programs into
                         # %LOCALAPPDATA%\Programs\MLV Drive, a Start Menu shortcut "MLV Drive"
 .\build.ps1 uninstall   # removes them (the settings stay)
+.\build.ps1 package     # dist\MLVDrive-<version>-win64.zip, for a GitHub release
 ```
 
-`tools/make_icons.py` draws the icons in `assets/` (only needed to change them).
+The version is set once, in `CMakeLists.txt` (`project(... VERSION ...)`). `tools/make_icons.py`
+draws the icons in `assets/` (only needed to change them).
+
+## Installing a release
+
+Unpack `MLVDrive-<version>-win64.zip` and run `install.cmd`: it installs MLV Drive for the current
+user (no administrator rights) and starts it; `uninstall.cmd` removes it. MLV Drive needs
+[WinFsp](https://winfsp.dev/rel/), installed separately.
 
 ## The tray app
 
 "MLV Drive" (`mlvdrive_tray.exe`) sits in the notification area: its icon is in colour while the
 drive is mounted, grey when not. Right-click (or click) it for the menu: mount and unmount, open the
 drive in Explorer (double-click does too), add and remove MLV folders, the drive letter, the DNG format,
-raw corrections, timecode and the test patterns, mount when it starts, start with Windows, edit the
-settings file. A change while mounted mounts again with it. WinFsp must be installed
+raw corrections (focus and bad pixels too), timecode and the test patterns, mount when it starts,
+start with Windows, edit the settings file. A change while mounted mounts again with it. WinFsp must be installed
 (https://winfsp.dev/rel/); the menu says so if it isn't.
 
 ## Settings
@@ -41,18 +49,31 @@ test_patterns = false
 mount_at_start = true       ; the tray app mounts when it starts
 [dng]
 format = 16                 ; 16 or packed
-raw_fixes = true            ; stripes, focus and bad pixels
+raw_fixes = true            ; raw corrections at all
+focus_pixels = auto         ; auto (cameras with them, clips with their own .fpm), on, off
+bad_pixels = off            ; off, auto, aggressive, map (.bpm)
 timecode = time             ; time (of day) or count (from 00:00:00:00)
 [performance]
-cache_mb = 512              ; finished frames kept in memory
+cache_mb = auto             ; finished frames kept: auto (a quarter of the RAM) or MB
 read_ahead = auto           ; auto (one per CPU) or a number of frames
 ```
+
+Pixel maps (`.fpm` focus, `.bpm` bad pixels, MLV-App's format and names:
+`<camera id>_<raw width>x<raw height>`) are looked up beside the clip, first as `<clip name>.fpm`
+/ `.bpm` (a map for that clip alone; a clip-named `.fpm` turns the focus fix on in auto), then
+under the generic name; then in `%APPDATA%\MLV Drive\pixelmaps`; then in `pixelmaps` beside the
+programs (MLV-App's maps for EOS M and 700D modes). Bad pixels are searched on the first frame.
+
+The cache keeps the frames read most recently, except that a clip read straight through keeps
+its start: a clip longer than the cache, played again, finds that part made.
 
 ## Mounting from the command line
 
 ```
 mlvdrive mount [MLV folder ...] [M:] [--dng=16|packed] [--no-fix|--fix] [--timecode=time|count]
-               [--test-patterns] [--cache=MB] [--read-ahead=N] [--debug]
+               [--focus-pixels=auto|on|off] [--bad-pixels=off|auto|aggressive|map]
+               [--test-patterns] [--cache=MB|auto] [--read-ahead=N] [--debug]
+mlvdrive --version
 mlvdrive mount --test-patterns [M:]
 mlvdrive unmount M:
 ```

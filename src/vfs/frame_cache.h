@@ -1,5 +1,11 @@
-// Finished DNG files, shared by every reader: an LRU limited in bytes, and read-ahead on worker
-// threads so that a player reading frames in order finds them made.
+// Finished DNG files, shared by every reader, limited in bytes, and read-ahead on worker threads
+// so that a player reading frames in order finds them made.
+//
+// What goes when the cache is full: the least recently used frame, except within a forward run
+// through a clip (frames read in order since the last jump), where the newest frame already read
+// goes instead. A clip longer than the cache, read straight through again (a loop, a second
+// pass), then finds its start still made instead of nothing (plain LRU drops each frame just
+// before it is needed). Frames made ahead and not read yet are kept.
 //
 // A frame asked for while it is being made (by read-ahead or another reader) is waited for, not
 // made twice. Read-ahead: reading frame N just after N-1 (reads going forward) queues N+1 ...
@@ -56,19 +62,21 @@ private:
     };
     struct Entry {
         FrameData data;              // null while being made
-        bool failed = false;
         bool ahead = false;          // made by read-ahead and not read yet
-        std::string error;
+        uint64_t run = 0;            // the clip's run it was made or last read in
+        uint64_t seq = 0;            // when it was made (larger: later)
         std::list<Key>::iterator lru;  // valid once made
     };
     struct ClipState {
         int64_t last = -1;           // the last frame read
+        uint64_t run = 1;            // the current forward run (a jump starts the next)
     };
 
     FrameData make(const ClipEntry& clip, uint32_t frame, std::string* error);
     void finish(const Key& key, FrameData data, const std::string& error, bool ahead);
+    bool noteRead(const ClipEntry& clip, uint32_t frame);    // under mutex_: true if going forward
     void queueAhead(const ClipEntry& clip, uint32_t frame);  // under mutex_
-    void evict();                                            // under mutex_
+    void evict(const Key& added);                            // under mutex_
     void worker();
 
     const uint64_t maxBytes_;
@@ -79,6 +87,7 @@ private:
     std::map<Key, Entry> entries_;
     std::list<Key> lru_;              // made entries, most recent first
     uint64_t bytes_ = 0;
+    uint64_t seq_ = 0;
     std::deque<Key> queue_;           // read-ahead jobs
     std::map<const ClipEntry*, ClipState> clips_;
     Stats stats_;

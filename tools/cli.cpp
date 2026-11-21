@@ -18,6 +18,7 @@
 //                                                       frames/s, MB/s, ms a file
 //
 // Options (dng, check, bench): --dng=16|packed|lj92|pass  (default 16), --no-fix (no raw corrections)
+// Options (dng, check, bench, selftest): --focus-pixels=auto|on|off, --bad-pixels=off|auto|aggressive|map
 // Options (dng, wav): --timecode=time|count  (DNG TimeCodes / WAV time reference: time of day, the
 //                     default, or frames from the start)
 // Options (read): --threads=N readers at once (default 1), --passes=N (default 2), --buffered
@@ -60,6 +61,7 @@ double msSince(Clock::time_point t0) {
 
 int usage() {
     std::fprintf(stderr,
+                 "MLV Drive " MLVDRIVE_VERSION ", the core on the command line\n"
                  "usage: mlvdrive_cli info  <clip.MLV> [frame]\n"
                  "       mlvdrive_cli dng   <clip.MLV> <frame> <out.dng> [--dng=16|packed|lj92|pass] [--no-fix]\n"
                  "       mlvdrive_cli check <clip.MLV> <frame> <file.dng> [--no-fix]\n"
@@ -79,6 +81,7 @@ struct Args {
     int passes = 2;
     bool buffered = false;
     dng::Timecode timecode = dng::Timecode::TimeOfDay;
+    raw::FixSettings fixes;  // focus and bad pixels
 };
 
 bool parseArgs(int argc, char** argv, Args* a) {
@@ -99,6 +102,22 @@ bool parseArgs(int argc, char** argv, Args* a) {
             a->passes = std::max(1, std::atoi(s.c_str() + 9));
         } else if (s == "--buffered") {
             a->buffered = true;
+        } else if (s == "--focus-pixels=auto") {
+            a->fixes.focusPixels = -1;
+        } else if (s == "--focus-pixels=on") {
+            a->fixes.focusPixels = 1;
+        } else if (s == "--focus-pixels=off") {
+            a->fixes.focusPixels = 0;
+        } else if (s == "--bad-pixels=off") {
+            a->fixes.badPixels = 0;
+        } else if (s == "--bad-pixels=auto") {
+            a->fixes.badPixels = 1;
+            a->fixes.badPixelSearch = 0;
+        } else if (s == "--bad-pixels=aggressive") {
+            a->fixes.badPixels = 1;
+            a->fixes.badPixelSearch = 1;
+        } else if (s == "--bad-pixels=map") {
+            a->fixes.badPixels = 3;
         } else if (s == "--timecode=time") {
             a->timecode = dng::Timecode::TimeOfDay;
         } else if (s == "--timecode=count") {
@@ -194,7 +213,7 @@ int info(const Args& a) {
     if (a.positional.size() == 2 && !parseFrame(a.positional[1], *clip, &frame)) return 1;
     std::vector<uint16_t> image(size_t(clip->width()) * clip->height());
     std::vector<uint8_t> scratch;
-    raw::Fixer fixer(*clip, raw::FixSettings{});
+    raw::Fixer fixer(*clip, a.fixes);
     // Twice: the first decode and fix pay for allocations and the fixer's one-off work.
     double decodeMs = 0, fixMs = 0;
     for (int pass = 0; pass < 2; ++pass) {
@@ -224,7 +243,7 @@ int writeDng(const Args& a) {
     if (!parseFrame(a.positional[1], *clip, &frame)) return 1;
 
     std::unique_ptr<raw::Fixer> fixer;
-    if (a.fix) fixer = std::make_unique<raw::Fixer>(*clip, raw::FixSettings{});
+    if (a.fix) fixer = std::make_unique<raw::Fixer>(*clip, a.fixes);
     dng::Options options;
     options.output = a.output;
     options.timecode = a.timecode;
@@ -387,7 +406,7 @@ int check(const Args& a) {
         return 1;
     }
     if (a.fix) {
-        raw::Fixer fixer(*clip, raw::FixSettings{});
+        raw::Fixer fixer(*clip, a.fixes);
         fixer.apply(expected.data(), frame);
     }
     size_t differ = 0, first = 0;
@@ -418,7 +437,7 @@ int bench(const Args& a) {
     }
 
     std::unique_ptr<raw::Fixer> fixer;
-    if (a.fix) fixer = std::make_unique<raw::Fixer>(*clip, raw::FixSettings{});
+    if (a.fix) fixer = std::make_unique<raw::Fixer>(*clip, a.fixes);
     dng::Options options;
     options.output = a.output;
     dng::Writer writer(*clip, options, fixer.get());
@@ -557,7 +576,7 @@ int selftest(const Args& a) {
     std::vector<uint16_t> fast(px), ref(px), fixedRef(px);
     std::vector<uint8_t> scratch;
     std::string error;
-    raw::Fixer fixVector(*clip, raw::FixSettings{}), fixScalar(*clip, raw::FixSettings{});
+    raw::Fixer fixVector(*clip, a.fixes), fixScalar(*clip, a.fixes);
     uint32_t decodeDiffer = 0, fixDiffer = 0;
     double fastMs = 0, refMs = 0, vecMs = 0, scalarMs = 0;
     for (uint32_t f = 0; f < clip->frameCount(); ++f) {
@@ -731,6 +750,7 @@ int main(int argc, char** argv) {
     if (argc < 2) return usage();
     Args a;
     if (!parseArgs(argc, argv, &a)) return usage();
+    raw::setPixelMapFolders(raw::defaultPixelMapFolders());
     std::string cmd = argv[1];
     int rc;
     if (cmd == "info") rc = info(a);

@@ -1,6 +1,7 @@
 #include "app/mounter.h"
 
 #include "fs/winfsp_fs.h"
+#include "raw/rawfix.h"
 #include "vfs/tree.h"
 
 #include <algorithm>
@@ -57,6 +58,10 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
     options.dng.output = s.format;
     options.dng.timecode = s.timecode;
     options.fix = s.rawFixes;
+    options.fixes.focusPixels = s.focusPixels;
+    options.fixes.badPixels = s.badPixels == 3 ? 3 : s.badPixels ? 1 : 0;  // aggressive: auto, searched harder
+    options.fixes.badPixelSearch = s.badPixels == 2 ? 1 : 0;
+    raw::setPixelMapFolders(raw::defaultPixelMapFolders());
     options.testPatterns = s.testPatterns;
 
     auto t0 = std::chrono::steady_clock::now();
@@ -72,7 +77,8 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
 
     const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
     const unsigned readAhead = s.readAhead < 0 ? cpus : unsigned(s.readAhead);
-    auto cache = std::make_unique<vfs::FrameCache>(uint64_t(s.cacheMb) << 20, readAhead ? cpus : 0, readAhead);
+    const unsigned cacheMb = s.cacheMb ? s.cacheMb : cacheAutoMb();
+    auto cache = std::make_unique<vfs::FrameCache>(uint64_t(cacheMb) << 20, readAhead ? cpus : 0, readAhead);
     auto drive = std::make_unique<fsys::Drive>(*tree, *cache);
     if (!drive->mount(normalizeDrive(s.drive), debug, error)) return false;
 
@@ -81,7 +87,7 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
     info_.clips = tree->clipCount();
     info_.bytes = tree->totalBytes();
     info_.openMs = ms;
-    info_.cacheMb = s.cacheMb;
+    info_.cacheMb = cacheMb;
     info_.readAhead = readAhead;
     tree_ = std::move(tree);
     cache_ = std::move(cache);

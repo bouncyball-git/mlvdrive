@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
 project(MLVDrive VERSION 0.1.0 LANGUAGES C CXX)
+# The version everywhere: the programs, the DNG Software tag, the tray app's resources and the
+# release zip's name (build.ps1 reads it from the line above).
+add_compile_definitions(MLVDRIVE_VERSION="${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -104,3 +107,7 @@ target_link_libraries(mlvdrive_cli PRIVATE mlv_vfs)
 if(MSVC)
     target_compile_options(mlvdrive_cli PRIVATE /W3)
 endif()
+
+# MLV-App's focus pixel maps (third_party/mlvapp/pixelmaps), beside the programs: looked up there
+# after the clip's folder and %APPDATA%\MLV Drive\pixelmaps.
+file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mlvapp/pixelmaps" DESTINATION "${CMAKE_BINARY_DIR}")

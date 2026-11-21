@@ -1,14 +1,21 @@
 #include "raw/rawfix.h"
 
 #include "mlv/clip.h"
+#include "util/file.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <random>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 // SSE4.1 for the stripe correction on x86 (checked at run time; the scalar code otherwise).
 #if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__)
@@ -265,7 +272,59 @@ void ApplyStripes(const Stripes& s, uint16_t* img, int black, int whiteLevel, in
     }
 }
 
+// --- Pixel maps ---
+
+std::mutex g_mapMutex;
+std::vector<std::string> g_mapFolders;
+thread_local const mlv::Clip* t_mapClip = nullptr;  // the clip whose fixes are running here
+
+std::filesystem::path ClipMap(const mlv::Clip& clip, const char* ext) {
+    std::filesystem::path p = util::u8(clip.path());
+    return p.replace_extension(ext);
+}
+
+// pixelproc_open_map: `name` is the generic map name ("80000331_1808x727.fpm").
+FILE* OpenPixelMap(const char* name) {
+    const std::filesystem::path generic = util::u8(std::string(name));
+    std::error_code ec;
+    auto tryOpen = [&](const std::filesystem::path& p) -> FILE* {
+        return std::filesystem::is_regular_file(p, ec) ? util::openFile(util::u8(p), "r") : nullptr;
+    };
+    if (t_mapClip) {
+        if (FILE* f = tryOpen(ClipMap(*t_mapClip, generic.extension().string().c_str()))) return f;
+        if (FILE* f = tryOpen(util::u8(t_mapClip->path()).parent_path() / generic)) return f;
+    }
+    std::lock_guard<std::mutex> lock(g_mapMutex);
+    for (const auto& folder : g_mapFolders)
+        if (FILE* f = tryOpen(util::u8(folder) / generic)) return f;
+    return nullptr;
+}
+
 }  // namespace
+
+void setPixelMapFolders(const std::vector<std::string>& folders) {
+    std::lock_guard<std::mutex> lock(g_mapMutex);
+    g_mapFolders = folders;
+}
+
+std::vector<std::string> defaultPixelMapFolders() {
+    std::vector<std::string> folders;
+#ifdef _WIN32
+    if (const wchar_t* appData = _wgetenv(L"APPDATA"))
+        folders.push_back(util::u8(std::filesystem::path(appData) / L"MLV Drive" / L"pixelmaps"));
+    wchar_t exe[MAX_PATH * 2];
+    const DWORD n = GetModuleFileNameW(nullptr, exe, DWORD(std::size(exe)));
+    if (n > 0) folders.push_back(util::u8(std::filesystem::path(std::wstring(exe, n)).parent_path() / L"pixelmaps"));
+#else
+    if (const char* home = std::getenv("HOME")) folders.push_back(std::string(home) + "/.config/mlvdrive/pixelmaps");
+#endif
+    return folders;
+}
+
+bool clipHasOwnFocusMap(const mlv::Clip& clip) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(ClipMap(clip, ".fpm"), ec);
+}
 
 void setSimd(bool on) {
     g_simd.store(on, std::memory_order_relaxed);
@@ -292,11 +351,12 @@ bool cameraHasFocusPixels(uint32_t model) {
 Fixer::Fixer(const mlv::Clip& clip, const FixSettings& settings) : clip_(clip), settings_(settings) {
     focusMap_.type = PIX_FOCUS;
     badMap_.type = PIX_BAD;
+    pixelproc_open_map = OpenPixelMap;
     if (!settings.enabled) return;
 
     stripes_ = settings.verticalStripes < 0 ? (clip.idnt.cameraModel == 0x80000285 ? 1 : 0) : settings.verticalStripes;
     const int dotMode = FocusDotMode(clip);
-    focus_ = settings.focusPixels < 0 ? (dotMode != 0 ? 1 : 0) : settings.focusPixels;
+    focus_ = settings.focusPixels < 0 ? (dotMode != 0 || clipHasOwnFocusMap(clip) ? 1 : 0) : settings.focusPixels;
     cropRec_ = dotMode == 2 ? 1 : (focus_ == 2 ? 1 : 0);
     active_ = stripes_ || focus_ || settings.badPixels || settings.chromaSmooth;
 
@@ -344,6 +404,11 @@ void Fixer::run(uint16_t* image, uint32_t frameIndex, bool first) {
     const int bpp = clip_.bitsPerPixel();
     const int shift = std::max(0, 14 - bpp);
     const mlv::FrameIndex& f = clip_.frame(frameIndex);
+    // Pixel maps (loaded on the first run) are looked up beside this clip first.
+    struct MapClip {
+        explicit MapClip(const mlv::Clip* c) { t_mapClip = c; }
+        ~MapClip() { t_mapClip = nullptr; }
+    } mapClip(&clip_);
 
     // 10/12-bit data is worked on at 14 bits, as MLV-App does.
     if (shift) {

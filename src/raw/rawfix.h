@@ -9,6 +9,8 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <string>
+#include <vector>
 
 namespace mlv {
 class Clip;
@@ -19,9 +21,10 @@ namespace raw {
 struct FixSettings {
     bool enabled = true;
     int verticalStripes = -1;  // -1 auto (on for the 5D Mark III), 0 off, 1 on, 2 forced (every frame measured)
-    int focusPixels = -1;      // -1 auto (on for cameras with focus pixels), 0 off, 1 on, 2 on with crop_rec map
+    int focusPixels = -1;      // -1 auto (on for cameras with focus pixels, or a clip with its own .fpm),
+                               // 0 off, 1 on, 2 on with crop_rec map
     int focusMethod = 0;       // interpolation: 0 MLVFS, 1 raw2dng, 2 rewind
-    int badPixels = 0;         // 0 off, 1 auto, 2 forced
+    int badPixels = 0;         // 0 off, 1 auto (searched on frame 0), 2 forced, 3 from a .bpm map
     int badPixelSearch = 0;    // 0 normal, 1 aggressive
     int badPixelMethod = 0;    // interpolation: 0 MLVFS, 1 raw2dng, 2 rewind
     int chromaSmooth = 0;      // 0 off, 2 (2x2), 3 (3x3), 5 (5x5)
@@ -41,6 +44,16 @@ void stripeFactors(const mlv::Clip& clip, const uint16_t* image, bool onePass, d
 // The vector (SSE4.1) code where there is one, or the scalar code it must equal (for comparing).
 // On by default; process-wide.
 void setSimd(bool on);
+
+// Pixel maps (focus .fpm, bad .bpm; named <camera id>_<raw width>x<raw height>, as MLV-App's) are
+// looked up, for a clip: beside it as <clip name>.fpm / .bpm (a map for that clip alone), beside
+// it under the generic name, then in these folders in order (UTF-8 paths). Process-wide.
+void setPixelMapFolders(const std::vector<std::string>& folders);
+// The usual folders: <settings folder>\pixelmaps (%APPDATA%\MLV Drive\pixelmaps), then the
+// pixelmaps folder beside the program.
+std::vector<std::string> defaultPixelMapFolders();
+// Whether a clip has its own focus pixel map beside it (<clip name>.fpm).
+bool clipHasOwnFocusMap(const mlv::Clip& clip);
 
 // Whether a camera has focus pixels (and the auto setting turns their fix on).
 bool cameraHasFocusPixels(uint32_t cameraModel);

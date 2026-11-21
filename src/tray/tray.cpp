@@ -27,11 +27,13 @@ constexpr UINT kJobDone = WM_APP + 2;       // a mount or unmount finished (lPar
 constexpr UINT kStopRequest = WM_APP + 3;   // `mlvdrive unmount` asked
 constexpr UINT kIconId = 1;
 const wchar_t kAppName[] = L"MLV Drive";
+const wchar_t kVersion[] = L"" MLVDRIVE_VERSION;
 const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 enum MenuId : UINT {
     kMount = 100, kUnmount, kOpen, kAddFolder, kDriveAuto, kFormat16, kFormatPacked, kFixes, kTimecodeTime,
     kTimecodeCount, kPatterns, kMountAtStart, kAutostart, kEditSettings, kReloadSettings, kGetWinFsp, kQuit,
+    kFocusAuto, kFocusOn, kFocusOff, kBadOff, kBadAuto, kBadAggressive, kBadMap,
     kDriveFirst = 200,         // + letter index (A = 0)
     kRemoveFolderFirst = 300   // + the folder's index
 };
@@ -72,7 +74,7 @@ void UpdateIcon(DWORD message = NIM_MODIFY) {
     nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_SHOWTIP;
     nid.uCallbackMessage = kTrayMessage;
     nid.hIcon = g_state == State::Mounted ? g_iconOn : g_iconOff;
-    std::wstring tip = kAppName;
+    std::wstring tip = std::wstring(kAppName) + L" " + kVersion;
     if (g_state == State::Mounted)
         tip += L" — " + g_info.mountPoint + L" (" + std::to_wstring(g_info.clips) +
                (g_info.clips == 1 ? L" clip)" : L" clips)");
@@ -322,6 +324,17 @@ void ShowMenu() {
     radio(dng, kFormatPacked, L"Uncompressed, packed to the clip's bit depth", g_settings.format == dng::Output::Uncompressed);
     AppendMenuW(dng, MF_SEPARATOR, 0, nullptr);
     item(dng, kFixes, L"Raw corrections (stripes, focus and bad pixels)", true, g_settings.rawFixes);
+    HMENU focus = CreatePopupMenu();
+    radio(focus, kFocusAuto, L"Auto (cameras with focus pixels, clips with their own .fpm)", g_settings.focusPixels < 0);
+    radio(focus, kFocusOn, L"On", g_settings.focusPixels > 0);
+    radio(focus, kFocusOff, L"Off", g_settings.focusPixels == 0);
+    AppendMenuW(dng, MF_POPUP | (g_settings.rawFixes ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(focus), L"Focus pixels");
+    HMENU bad = CreatePopupMenu();
+    radio(bad, kBadOff, L"Off", g_settings.badPixels == 0);
+    radio(bad, kBadAuto, L"Auto (searched on the first frame)", g_settings.badPixels == 1);
+    radio(bad, kBadAggressive, L"Aggressive (searched harder)", g_settings.badPixels == 2);
+    radio(bad, kBadMap, L"From a map (.bpm)", g_settings.badPixels == 3);
+    AppendMenuW(dng, MF_POPUP | (g_settings.rawFixes ? 0 : MF_GRAYED), reinterpret_cast<UINT_PTR>(bad), L"Bad pixels");
     AppendMenuW(dng, MF_SEPARATOR, 0, nullptr);
     radio(dng, kTimecodeTime, L"Timecode: time of day", g_settings.timecode == dng::Timecode::TimeOfDay);
     radio(dng, kTimecodeCount, L"Timecode: from 00:00:00:00", g_settings.timecode == dng::Timecode::FrameCount);
@@ -334,6 +347,7 @@ void ShowMenu() {
     item(menu, kEditSettings, L"Edit the settings file…");
     item(menu, kReloadSettings, L"Reload the settings file", !busy);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (std::wstring(kAppName) + L" " + kVersion).c_str());
     item(menu, kQuit, mounted ? L"Quit (unmounts " + g_info.mountPoint + L")" : L"Quit");
 
     POINT pt;
@@ -376,6 +390,13 @@ void Command(UINT id) {
         case kFormat16: g_settings.format = dng::Output::Uncompressed16; SettingsChanged(); return;
         case kFormatPacked: g_settings.format = dng::Output::Uncompressed; SettingsChanged(); return;
         case kFixes: g_settings.rawFixes = !g_settings.rawFixes; SettingsChanged(); return;
+        case kFocusAuto: g_settings.focusPixels = -1; SettingsChanged(); return;
+        case kFocusOn: g_settings.focusPixels = 1; SettingsChanged(); return;
+        case kFocusOff: g_settings.focusPixels = 0; SettingsChanged(); return;
+        case kBadOff: g_settings.badPixels = 0; SettingsChanged(); return;
+        case kBadAuto: g_settings.badPixels = 1; SettingsChanged(); return;
+        case kBadAggressive: g_settings.badPixels = 2; SettingsChanged(); return;
+        case kBadMap: g_settings.badPixels = 3; SettingsChanged(); return;
         case kTimecodeTime: g_settings.timecode = dng::Timecode::TimeOfDay; SettingsChanged(); return;
         case kTimecodeCount: g_settings.timecode = dng::Timecode::FrameCount; SettingsChanged(); return;
         case kPatterns: g_settings.testPatterns = !g_settings.testPatterns; SettingsChanged(); return;

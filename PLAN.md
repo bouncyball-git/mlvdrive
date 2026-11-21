@@ -258,8 +258,29 @@ in Resolve.
      another, shows once, by its full path; clashing names get " (2)"); a folder that can't be
      read is reported and left out. Checked: E:\mlv + G:\mlv + G:\mlv\Tipebi_Asorti: 54 clip
      folders, no duplicates, 304 ms; the tray app keeps both folders when it saves.
-   - Not done: chroma smoothing and bad pixels as settings (the fixer has them; their defaults
-     stay); the cache policy for long clips and a RAM-sized default (proposed, not built).
+   - Cache (after milestone 7): within a forward run through a clip (reads in order since the
+     last jump) the newest frame already read is dropped instead of the least recently used, so
+     a clip longer than the cache keeps its start for the next pass; other clips and older
+     places still go least-recently-used first; unread read-ahead frames are kept. Default size
+     `cache_mb = auto`: a quarter of the RAM, 512 MB to 16 GB. Checked: a 479-frame clip read
+     3 times through 512 MB: 232 frames found made on passes 2-3 (about 116 a pass; plain LRU
+     found none), every read-ahead frame read.
+   - Focus and bad pixels as settings (after milestone 7; chroma smoothing left out on purpose):
+     `focus_pixels = auto|on|off`, `bad_pixels = off|auto|aggressive|map`, in the ini, on the
+     console and in the tray's DNG menu. Pixel maps looked up beside the clip (`<clip>.fpm` /
+     `.bpm`, then the generic `<camera>_<w>x<h>` name), then `%APPDATA%\MLV Drive\pixelmaps`,
+     then `pixelmaps` beside the programs (MLV-App's 7 maps, copied into
+     `third_party/mlvapp/pixelmaps`, installed with the programs); a clip-named `.fpm` turns the
+     focus fix on in auto. Checked on `M05-1137` (5D Mark III with its own .fpm): 24,697 pixels
+     changed, all of them map points; aggressive bad-pixel search finds 10 in a frame (auto
+     none); selftest identical vector / scalar; the drive gives the same bytes read out of order
+     (the search runs on frame 0).
+   - Release (after milestone 7): version 0.1.0 from CMakeLists.txt in every program
+     (`mlvdrive --version`, help, tray tooltip and menu), the tray's resources and the DNG
+     Software tag. `tools/install.ps1` (+ `install.cmd` / `uninstall.cmd`, CRLF: batch files)
+     installs per user from its own folder; `build.ps1 install` uses it from `build\stage`;
+     `build.ps1 package` makes `dist\MLVDrive-<version>-win64.zip` (2.8 MB). Checked: installed
+     from the unpacked zip over a running copy, started, `M:` back with every frame checked.
 8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).
 
 **Resolve, later** (when the user wants to run it): import `M:\<clip>` as one clip with the

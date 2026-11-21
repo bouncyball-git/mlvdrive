@@ -28,6 +28,7 @@ BOOL WINAPI onConsoleEvent(DWORD) {
 
 int usage() {
     std::fprintf(stderr,
+                 "MLV Drive " MLVDRIVE_VERSION ": MLV clips as a drive of CinemaDNG sequences\n"
                  "usage: mlvdrive mount [MLV folder ...] [M:] [options]\n"
                  "       mlvdrive unmount <M:>\n"
                  "  Shows every MLV clip under the folders (merged) as a folder of DNG files. The folders,\n"
@@ -36,13 +37,18 @@ int usage() {
                  "  --dng=16         16-bit uncompressed DNG (the default)\n"
                  "  --dng=packed     uncompressed, packed to the clip's bit depth (smaller)\n"
                  "  --no-fix         no raw corrections (stripes, focus and bad pixels); --fix: with them\n"
+                 "  --focus-pixels=auto|on|off   auto: cameras with focus pixels, clips with their own .fpm\n"
+                 "  --bad-pixels=off|auto|aggressive|map   searched on frame 0, harder, or from a .bpm map\n"
+                 "                   (maps: beside the clip as <clip>.fpm/.bpm or <camera>_<w>x<h>, then\n"
+                 "                   %%APPDATA%%\\MLV Drive\\pixelmaps, then pixelmaps beside the program)\n"
                  "  --timecode=time  DNG timecode and WAV time reference: the time of day the clip was\n"
                  "                   recorded (the default; clips line up by when they were shot)\n"
                  "  --timecode=count the frames from the start of the clip (00:00:00:00)\n"
                  "  --test-patterns  add a TestPatterns folder: 12 test charts (colour bars, PLUGE, grey\n"
                  "                   scale, crosshatch, safe areas, zone plate...), 5 s each, 1080p25; the\n"
                  "                   MLV folder may then be left out\n"
-                 "  --cache=MB       frames kept made (default 512)\n"
+                 "  --cache=MB       finished frames kept in memory (auto: a quarter of the RAM, 512 MB\n"
+                 "                   to 16 GB; the default)\n"
                  "  --read-ahead=N   frames made ahead of the one read (default: one per CPU; 0: none)\n"
                  "  --debug          log every file system request\n"
                  "  Ctrl+C or `mlvdrive unmount M:` unmounts.\n",
@@ -58,6 +64,10 @@ bool isDriveLetter(const std::wstring& s) {
 
 int wmain(int argc, wchar_t** argv) {
     SetConsoleOutputCP(CP_UTF8);
+    if (argc == 2 && std::wstring(argv[1]) == L"--version") {
+        std::printf("MLV Drive %s\n", MLVDRIVE_VERSION);
+        return 0;
+    }
     if (argc == 3 && std::wstring(argv[1]) == L"unmount") {
         const std::wstring at = app::normalizeDrive(argv[2]);
         HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, app::stopEventName(at).c_str());
@@ -86,7 +96,9 @@ int wmain(int argc, wchar_t** argv) {
     for (int i = 2; i < argc; ++i) {
         std::wstring a = argv[i];
         unsigned long v = 0;
-        if (a.rfind(L"--cache=", 0) == 0) {
+        if (a == L"--cache=auto") {
+            s.cacheMb = 0;
+        } else if (a.rfind(L"--cache=", 0) == 0) {
             if (!number(a, 8, &v) || v < 16) return usage();
             s.cacheMb = unsigned(v);
         } else if (a.rfind(L"--read-ahead=", 0) == 0) {
@@ -96,6 +108,13 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--dng=packed") s.format = dng::Output::Uncompressed;
         else if (a == L"--no-fix") s.rawFixes = false;
         else if (a == L"--fix") s.rawFixes = true;
+        else if (a == L"--focus-pixels=auto") s.focusPixels = -1;
+        else if (a == L"--focus-pixels=on") s.focusPixels = 1;
+        else if (a == L"--focus-pixels=off") s.focusPixels = 0;
+        else if (a == L"--bad-pixels=off") s.badPixels = 0;
+        else if (a == L"--bad-pixels=auto") s.badPixels = 1;
+        else if (a == L"--bad-pixels=aggressive") s.badPixels = 2;
+        else if (a == L"--bad-pixels=map") s.badPixels = 3;
         else if (a == L"--timecode=time") s.timecode = dng::Timecode::TimeOfDay;
         else if (a == L"--timecode=count") s.timecode = dng::Timecode::FrameCount;
         else if (a == L"--test-patterns") s.testPatterns = true;

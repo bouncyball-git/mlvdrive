@@ -1,17 +1,19 @@
 # Builds MLV Drive on Windows (Visual Studio 2022 or its Build Tools, with CMake and Ninja).
 #
-#   .\build.ps1 [clean] [build] [install] [uninstall] [-Config Release|Debug|RelWithDebInfo]
+#   .\build.ps1 [clean] [build] [install] [uninstall] [package] [-Config Release|Debug|RelWithDebInfo]
 #
 #   clean      deletes the build folder
 #   build      configures (if needed) and builds (the default action):
 #                build\mlvdrive_tray.exe  the tray app (MLV Drive in the notification area)
 #                build\mlvdrive.exe       the drive on the command line
 #                build\mlvdrive_cli.exe   the core on the command line (clip info, DNGs, timings)
-#   install    for the current user, no administrator rights: the programs into
+#   install    for the current user, no administrator rights (tools\install.ps1): the programs into
 #              %LOCALAPPDATA%\Programs\MLV Drive, a Start Menu shortcut "MLV Drive" (the tray app);
 #              stops a running copy first. WinFsp must be installed separately (https://winfsp.dev/rel/)
 #   uninstall  removes them, the shortcut and "Start with Windows"; keeps the settings
 #              (%APPDATA%\MLV Drive)
+#   package    dist\MLVDrive-<version>-win64.zip: the programs, pixel maps, README, LICENSE and the
+#              installer (install.cmd / uninstall.cmd), for a GitHub release
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Actions,
@@ -22,32 +24,33 @@ $Root = $PSScriptRoot
 $BuildDir = Join-Path $Root 'build'
 if (-not $Actions) { $Actions = @('build') }
 
-$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\MLV Drive'
-$Shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'MLV Drive.lnk'
-
 function Step([string] $text) { Write-Host "==> $text" -ForegroundColor Cyan }
 
-# Stops MLV Drive running from the install folder: the tray app is asked to quit (its menu's Quit:
-# it unmounts and takes its icon away), anything still running after 5 s is ended (Windows then
-# unmounts its drive).
-function Stop-Installed {
-    $running = @(Get-Process mlvdrive_tray, mlvdrive -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) })
-    if (-not $running) { return }
-    Add-Type -Namespace MlvDrive -Name Win -MemberDefinition @'
-[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string title);
-[DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr wnd, uint msg, IntPtr w, IntPtr l);
-'@
-    $tray = [MlvDrive.Win]::FindWindowW('MLVDriveTray', [NullString]::Value)
-    if ($tray -ne [IntPtr]::Zero) { [MlvDrive.Win]::PostMessageW($tray, 0x0111, [IntPtr]116, [IntPtr]::Zero) | Out-Null }  # WM_COMMAND Quit
-    foreach ($p in $running) {
-        Step "stop $($p.Name) (pid $($p.Id))"
-        if (-not $p.WaitForExit(5000)) { Stop-Process -Id $p.Id -Force; $p.WaitForExit(5000) | Out-Null }
-    }
-}
 function Run {
     & $args[0] @($args | Select-Object -Skip 1)
     if ($LASTEXITCODE -ne 0) { throw "failed (exit code $LASTEXITCODE): $($args -join ' ')" }
+}
+
+# The version CMakeLists.txt gives the project.
+function Get-Version {
+    $m = Select-String -Path (Join-Path $Root 'CMakeLists.txt') -Pattern 'project\(\S+ VERSION ([0-9.]+)'
+    if (-not $m) { throw 'no project version in CMakeLists.txt' }
+    $m.Matches[0].Groups[1].Value
+}
+
+# What gets installed or released, gathered in build\stage: the programs, the pixel maps, the
+# README and LICENSE, the installer.
+function New-Stage {
+    $stage = Join-Path $BuildDir 'stage'
+    $programs = 'mlvdrive_tray.exe', 'mlvdrive.exe', 'mlvdrive_cli.exe' | ForEach-Object { Join-Path $BuildDir $_ }
+    foreach ($f in $programs) { if (-not (Test-Path $f)) { throw "no $f : build first" } }
+    if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+    New-Item -ItemType Directory -Force $stage | Out-Null
+    Copy-Item $programs $stage
+    Copy-Item (Join-Path $BuildDir 'pixelmaps') $stage -Recurse
+    Copy-Item (Join-Path $Root 'README.md'), (Join-Path $Root 'LICENSE') $stage
+    Copy-Item (Join-Path $Root 'tools\install.ps1'), (Join-Path $Root 'tools\install.cmd'), (Join-Path $Root 'tools\uninstall.cmd') $stage
+    $stage
 }
 
 # The Visual Studio C++ environment (compiler, Windows SDK, CMake, Ninja) in this session.
@@ -93,37 +96,27 @@ foreach ($action in $Actions) {
             Run cmake --build $BuildDir
         }
         'install' {
-            $files = 'mlvdrive_tray.exe', 'mlvdrive.exe', 'mlvdrive_cli.exe' | ForEach-Object { Join-Path $BuildDir $_ }
-            foreach ($f in $files) { if (-not (Test-Path $f)) { throw "no $f : build first" } }
-            Stop-Installed
-            Step "install: $InstallDir"
-            New-Item -ItemType Directory -Force $InstallDir | Out-Null
-            Copy-Item $files $InstallDir -Force
-            Copy-Item (Join-Path $Root 'README.md'), (Join-Path $Root 'LICENSE') $InstallDir -Force
-            $shell = New-Object -ComObject WScript.Shell
-            $link = $shell.CreateShortcut($Shortcut)
-            $link.TargetPath = Join-Path $InstallDir 'mlvdrive_tray.exe'
-            $link.WorkingDirectory = $InstallDir
-            $link.Description = 'MLV Drive: MLV clips as a drive of CinemaDNG sequences'
-            $link.Save()
-            Step "Start Menu: $Shortcut"
-            $winfsp = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\WinFsp' -Name InstallDir -ErrorAction SilentlyContinue
-            if (-not $winfsp) {
-                Write-Warning 'WinFsp is not installed: MLV Drive needs it for the drive (https://winfsp.dev/rel/).'
-            }
-            Write-Host 'Installed. Start "MLV Drive" from the Start Menu: its icon is in the notification area.'
+            $stage = New-Stage
+            & (Join-Path $stage 'install.ps1')
         }
         'uninstall' {
-            Stop-Installed
-            if (Test-Path $InstallDir) { Step "remove $InstallDir"; Remove-Item -Recurse -Force $InstallDir }
-            if (Test-Path $Shortcut) { Step "remove $Shortcut"; Remove-Item -Force $Shortcut }
-            $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-            if (Get-ItemProperty $run -Name 'MLV Drive' -ErrorAction SilentlyContinue) {
-                Step 'remove "Start with Windows"'
-                Remove-ItemProperty $run -Name 'MLV Drive'
-            }
-            Write-Host "Uninstalled. The settings are kept in $env:APPDATA\MLV Drive."
+            & (Join-Path $Root 'tools\install.ps1') -Uninstall
         }
-        default { throw "unknown action '$action' (clean, build, install, uninstall)" }
+        'package' {
+            $stage = New-Stage
+            $version = Get-Version
+            $dist = Join-Path $Root 'dist'
+            New-Item -ItemType Directory -Force $dist | Out-Null
+            $zip = Join-Path $dist "MLVDrive-$version-win64.zip"
+            if (Test-Path $zip) { Remove-Item -Force $zip }
+            # The files inside a folder named after the release, as people unpack it.
+            $named = Join-Path $BuildDir "MLVDrive-$version"
+            if (Test-Path $named) { Remove-Item -Recurse -Force $named }
+            Copy-Item $stage $named -Recurse
+            Compress-Archive -Path $named -DestinationPath $zip
+            Remove-Item -Recurse -Force $named
+            Step ("package: {0} ({1:N1} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
+        }
+        default { throw "unknown action '$action' (clean, build, install, uninstall, package)" }
     }
 }

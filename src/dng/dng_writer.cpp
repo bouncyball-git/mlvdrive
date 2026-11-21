@@ -19,7 +19,10 @@ namespace dng {
 
 namespace {
 
-constexpr char kSoftware[] = "MLV Drive";
+#ifndef MLVDRIVE_VERSION
+#define MLVDRIVE_VERSION "dev"
+#endif
+constexpr char kSoftware[] = "MLV Drive " MLVDRIVE_VERSION;
 
 enum Type : uint16_t { kByte = 1, kAscii = 2, kShort = 3, kLong = 4, kRational = 5, kUndefined = 7, kSRational = 10 };
 
