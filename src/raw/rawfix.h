@@ -42,7 +42,8 @@ void stripeFactors(const mlv::Clip& clip, const uint16_t* image, bool onePass, d
 bool cameraHasFocusPixels(uint32_t cameraModel);
 
 // One per clip and settings. apply() may run on several threads at once: the first call works
-// out what the clip needs (stripe factors, pixel maps) under a lock, the rest only read that.
+// out what the clip needs (stripe factors, pixel maps) under a lock, always from frame 0 (decoded
+// for it if the first call is for another frame), the rest only read that.
 class Fixer {
 public:
     Fixer(const mlv::Clip& clip, const FixSettings& settings);

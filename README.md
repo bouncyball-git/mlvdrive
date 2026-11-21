@@ -6,12 +6,23 @@ disk space. Windows first (WinFsp); Linux and macOS later. Work in progress: see
 
 ## Building
 
-Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja:
+Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
+[WinFsp](https://winfsp.dev/rel/) with its Developer feature:
 
 ```
-.\build.ps1            # build\mlvdrive_cli.exe
+.\build.ps1            # build\mlvdrive.exe, build\mlvdrive_cli.exe
 .\build.ps1 clean build
 ```
+
+## Mounting
+
+```
+mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--debug]
+```
+
+Every MLV clip under the folder (subfolders included) shows as a folder of DNG files,
+`NAME\NAME_000000.dng` onward, made when they are read. Without a drive letter the next free one
+from Z: down is used. Ctrl+C unmounts. WinFsp must be installed where it runs.
 
 `mlvdrive_cli` runs the core without the drive:
 

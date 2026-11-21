@@ -63,6 +63,9 @@ public:
     // The whole DNG file of frame `frameIndex` into `out` (resized). Thread-safe (one Scratch per
     // thread).
     bool renderFrame(uint32_t frameIndex, std::vector<uint8_t>& out, Scratch& scratch, std::string* error) const;
+    // Only the header of frame `frameIndex` (headerSize() bytes), without making the image: for
+    // reads of a file's start (apps reading metadata). Fixed-size outputs only (false otherwise).
+    bool renderHeader(uint32_t frameIndex, std::vector<uint8_t>& out) const;
 
     // Writes frame `frameIndex` of the clip to `path`. Thread-safe (one Scratch per thread).
     bool writeFrame(uint32_t frameIndex, const std::string& path, Scratch& scratch, uint64_t* bytesWritten,

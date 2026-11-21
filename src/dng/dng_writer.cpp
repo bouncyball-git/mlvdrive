@@ -477,6 +477,13 @@ bool Writer::renderFrame(uint32_t frameIndex, std::vector<uint8_t>& out, Scratch
     return true;
 }
 
+bool Writer::renderHeader(uint32_t frameIndex, std::vector<uint8_t>& out) const {
+    if (frameIndex >= clip_.frameCount() || imageSize_ == 0) return false;
+    buildHeader(frameIndex, size_t(imageSize_), false, output_ == Output::Uncompressed16 ? 16 : clip_.bitsPerPixel(),
+                out);
+    return true;
+}
+
 bool Writer::writeFrame(uint32_t frameIndex, const std::string& path, Scratch& s, uint64_t* bytesWritten,
                         std::string* error) const {
     if (frameIndex >= clip_.frameCount()) {

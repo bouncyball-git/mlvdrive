@@ -222,7 +222,18 @@ void Fixer::apply(uint16_t* image, uint32_t frameIndex) {
     if (!primed_.load(std::memory_order_acquire)) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!primed_.load(std::memory_order_relaxed)) {
-            run(image, frameIndex, true);
+            // What the clip needs is always measured on frame 0, whichever frame comes first: a
+            // frame's output must not depend on the order frames are asked for (on the drive, any).
+            bool primed = false;
+            if (frameIndex != 0) {
+                std::vector<uint16_t> first(size_t(clip_.width()) * clip_.height());
+                std::vector<uint8_t> scratch;
+                if (clip_.decodeFrame(0, first.data(), scratch, nullptr)) {
+                    run(first.data(), 0, true);
+                    primed = true;
+                }
+            }
+            run(image, frameIndex, !primed);
             primed_.store(true, std::memory_order_release);
             return;
         }

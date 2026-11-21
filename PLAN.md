@@ -138,12 +138,28 @@ in Resolve.
    - Test clip, one thread: decode 8.3 ms + corrections 3.9 ms, whole 16-bit DNG 12.3 ms;
      8 threads: 400 frames/s 16-bit (17x real time), 267 packed, 186 LJ92, 1420 pass-through.
    - **To do:** import a DNG (and the sequence) in Resolve: colour, orientation, raw controls.
-3. **WinFsp mount, read-only, no cache**:
-   - `mlvdrive mount E:\mlv M:`: folders, DNG names, sizes, timestamps from the clip's
-     date; reads generate the frame.
-   - Check in Resolve: the folder imports as one clip with the right frame rate and
+3. **WinFsp mount, read-only, no cache** (done but for the Resolve check):
+   - `mlvdrive mount <folder> [M:] [--dng=16|packed] [--no-fix] [--debug]`; no letter: the
+     next free one from Z: down. Ctrl+C unmounts.
+   - `src/vfs/tree`: every `.MLV` under the folder (opened on all threads), subfolders that
+     hold clips kept, the rest left out; a clip folder named like an existing folder gets
+     " (2)". Names compare case-insensitively; dates from the clip's RTCI (frames apart by
+     their timestamps).
+   - `src/fs/winfsp_fs`: native API, read-only volume, one security descriptor (read for
+     everyone), `FileInfoTimeout` infinite (the tree never changes: Windows caches names,
+     sizes and file data). WinFsp passes opens on only if Create and Overwrite exist: stubs
+     that answer "write protected". The DLL is delay-loaded from WinFsp's install folder.
+   - A read within the header makes only the header; anything further makes the whole DNG,
+     kept by the open file until it closes.
+   - The raw fixer now always measures stripes (and searches bad pixels) on frame 0, whatever
+     frame comes first: before that, a frame's bytes depended on the order frames were read.
+   - Checked: every frame read from the drive, in any order, is byte-identical to
+     `mlvdrive_cli dng`; nested folders, the name clash, case-insensitive lookups, wrong frame
+     names, writes refused. Reading the sequence in order: 44.5 frames/s (176 MB/s, 1.9x real
+     time) made on the drive, 969 frames/s again from Windows' cache.
+   - **To do:** Resolve: the folder imports as one clip with the right frame rate and
      duration, raw controls in Camera Raw, playback.
-4. **Speed**: per-handle frame, LRU cache, read-ahead, WinFsp tuning.
+4. **Speed**: LRU cache, read-ahead, WinFsp tuning.
    - Measure: frames/s reading a mounted sequence (a CLI reader, then Resolve playback).
    - Target: real-time 1080p24 with corrections, and as close as possible at UHD.
 5. **Audio + timecode**: `<name>.wav` (BWF with the clip's timecode, mlvtoolbox `wav.cpp`),
