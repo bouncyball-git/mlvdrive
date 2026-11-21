@@ -21,7 +21,7 @@ bytes encoding. The original code is kept and still runs where the fast path doe
 | `lj92_fast` | 1 (the default): the fast decoder and encoder where they apply. 0: the original code, for comparing. `mlvdrive_tool selftest` decodes every frame both ways and encodes every 32nd frame both ways, and fails on any difference. |
 | `parseFast()` (with `lj92_bits`, `lj92_refill`, `lj92_refill_bytes`, `lj92_fill_fast`, `lj92_diff_fast`, `lj92_diff_slow`) | A decoder for predictor 1 with 1 to 4 components (camera MLV frames: 2 components), and for predictor 6 with 1 component (MLV-App's own frames). The image must be written whole: no linearisation table, no skipping. A 64-bit bit reader refills 8 bytes at once when none of them is 0xFF, byte by byte otherwise (stuffed bytes, markers, the end; past the end it reads zeros). A 12-bit table gives the code and its difference in one lookup; extra bits that don't fit are read from the buffer, and codes longer than 12 bits use the full table. The prediction is read from the output image. |
 | `parseScan()` | Takes the fast decoder when it applies. Predictor 6 with several components is left to the original code: there, "left" comes from any component. |
-| `fastEncode()` (with `lj92_row_diffs`, `lj92_ssss`) | An encoder for an image read whole (no delinearisation, no skipping). Each row's differences are computed once; the size categories and value bits need no branch; a 64-bit bit writer stores 4 bytes at once when none is 0xFF. It uses the same histogram, table, header and bits as `frequencyScan` + `writeBody`. |
+| `fastEncode()` (with `lj92_row_diffs`, `lj92_ssss`) | An encoder for an image read whole (no delinearisation, no skipping). Each row's differences are computed once. A table made once a frame gives each difference from -2048 to 2047 its size category (for the histogram) and its bits, the code then the value's, with their count: one lookup a sample; larger differences are worked out without a branch. A 64-bit bit writer stores every whole byte waiting (4 to 7) with one 8-byte store when none of them is 0xFF, else byte by byte with the stuffed 0x00. It uses the same histogram, table, header and bits as `frequencyScan` + `writeBody`. 12.7 to 8.4 ms a 1080p frame on one thread (6.3x the original encoder). The table and the writer came from mlvtoolbox, which shares this file. |
 | `lj92_encode()` | Takes the fast encoder when it applies. |
 
 ## Fixes
@@ -63,4 +63,10 @@ these checks decodes to wrong values, but always inside the image and the data.
     input: a cut camera frame, in `nextdiff()`.
   - With the bounds fixed, it found the missing-table crash in `lj92_open()`.
   - The final code: 3000 inputs, 6000 decodes, no memory errors.
+- **The encoder's table and writer** (from mlvtoolbox): `mlvtoolbox_cli bench` encodes 60 frames
+  of `E:\mlv\M21-1642.MLV` with both encoders and compares the bytes (all equal); lossless MLV
+  exports, from an uncompressed clip and recompressed from a lossless one, read back frame for
+  frame identical.
+- **The same file in both projects.** mlvtoolbox's `third_party/mlvapp/liblj92/lj92.c` is this
+  one with "mlvtoolbox" in place of "MLV Drive" in the comments: the code is the same.
 - Not checked: a `SLOW_HUFF` build (the original's other Huffman decoder, not used here).

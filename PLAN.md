@@ -282,7 +282,8 @@ in Resolve.
      installs per user from its own folder; `build.ps1 install` uses it from `build\stage`;
      `build.ps1 package` makes `dist\MLVDrive-<version>-win64.zip` (2.8 MB). Checked: installed
      from the unpacked zip over a running copy, started, `M:` back with every frame checked.
-     Version 0.2.0 since.
+     Version 0.2.0 since; 0.7.0 (new icon), 0.8.0 (the review passes: LJ92 hardened and fuzzed,
+     fixes and clean-up).
    - Installer (0.2.0): `installer/mlvdrive.iss`, `build.ps1 setup` ->
      `dist\MLVDrive-<version>-setup.exe` (2.5 MB; Inno Setup 6). Types Default (tray app +
      command-line drive) and Custom (gui / cli / tool components; at least one of gui and cli,

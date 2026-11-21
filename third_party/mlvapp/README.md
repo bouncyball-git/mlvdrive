@@ -13,9 +13,11 @@ From MLV-App (https://github.com/ilia3101/MLV-App), commit abdb10fd02dd (2026-11
   whole: a 64-bit bit reader refilling 8 bytes at a time without a branch where none is 0xFF,
   a combined 12-bit code + difference table (extra bits that don't fit read straight from the
   buffer, the full table only for codes over 12 bits), the prediction read from the output; and a
-  fast encoder (`fastEncode`) for images read whole: each row's differences
-  computed once, branch-free size categories and value bits, a 64-bit bit writer. The same values
-  and the same bytes as the original (`lj92_fast = 0` uses it, for comparing).
+  fast encoder (`fastEncode`) for images read whole: each row's differences computed once, a table
+  a frame for the differences -2048..2047 (their size category; their code and value bits with
+  the count: one lookup a sample), a 64-bit bit writer storing every whole byte waiting at once
+  when none is 0xFF. The same values and the same bytes as the original (`lj92_fast = 0` uses it,
+  for comparing). The same `lj92.c` as mlvtoolbox's, but for its name in the comments.
 - `camid/` (GPL): camera colour matrices and focal plane data. Changed: `extern "C"`; the
   accessors but `camidGet` left out (not used).
 - `llrawproc/pixelproc.c`, `wirth.h` (GPL): focus and bad pixel fixes. Changed: pixel maps opened

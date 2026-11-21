@@ -1393,7 +1393,12 @@ int writeBody(lje* self) {
 /* MLV Drive: a faster encoder for an image read whole (no delinearisation, no skipping): the
  * same predictions, histogram, table and bits as frequencyScan + writeBody above, byte for byte.
  * A row's differences are computed once into a small buffer (the first row and column outside
- * the inner loop), and a 64-bit bit writer stores 4 bytes at once when none is 0xFF. */
+ * the inner loop). Each difference from -2048 to 2047 has its bits (the code, then the value's)
+ * and their count in a table made once a frame: one lookup a sample (others are worked out).
+ * The 64-bit bit writer stores every whole byte waiting (4 to 7) with one 8-byte store when none
+ * of them is 0xFF; else byte by byte, each 0xFF followed by the stuffed 0x00. */
+
+#define LJ92_ENC_RANGE 2048  /* the table: differences -2048 .. 2047 */
 
 /* The differences of one row (type 6 prediction; the first row from the left, the first column
  * from above), as the original computes them: (cur - Px) wrapped to 16 bits, signed. */
@@ -1426,18 +1431,23 @@ static int fastEncode(lje* self) {
        category doesn't wait on one counter) */
     int hist[4][17];
     memset(hist, 0, sizeof hist);
+    /* the categories of -2048 .. 2047 looked up (one load), the others worked out */
+    uint8_t cat[2 * LJ92_ENC_RANGE];
+    for (int k = 0; k < 2 * LJ92_ENC_RANGE; k++) cat[k] = (uint8_t)lj92_ssss(k - LJ92_ENC_RANGE);
+#define LJ92_CAT(v) ((unsigned)((v) + LJ92_ENC_RANGE) < 2u * LJ92_ENC_RANGE ? cat[(v) + LJ92_ENC_RANGE] : lj92_ssss(v))
     for (int y = 0; y < H; y++) {
         const u16* row = self->image + (size_t)y * W;
         lj92_row_diffs(row, y ? row - W : NULL, W, base, d);
         int i = 0;
         for (; i + 4 <= W; i += 4) {
-            hist[0][lj92_ssss(d[i])]++;
-            hist[1][lj92_ssss(d[i + 1])]++;
-            hist[2][lj92_ssss(d[i + 2])]++;
-            hist[3][lj92_ssss(d[i + 3])]++;
+            hist[0][LJ92_CAT(d[i])]++;
+            hist[1][LJ92_CAT(d[i + 1])]++;
+            hist[2][LJ92_CAT(d[i + 2])]++;
+            hist[3][LJ92_CAT(d[i + 3])]++;
         }
-        for (; i < W; i++) hist[0][lj92_ssss(d[i])]++;
+        for (; i < W; i++) hist[0][LJ92_CAT(d[i])]++;
     }
+#undef LJ92_CAT
     for (int k = 0; k < 17; k++) self->hist[k] += hist[0][k] + hist[1][k] + hist[2][k] + hist[3][k];
     createEncodeTable(self);
     writeHeader(self);
@@ -1452,10 +1462,20 @@ static int fastEncode(lje* self) {
         length[s] = self->huffbits[hc];
         extra[s] = s < 16 ? s : 0;
     }
+    /* the table: entry = the bits (code, then value) << 8 | their count */
+    uint64_t* table = (uint64_t*)malloc(sizeof(uint64_t) * 2 * LJ92_ENC_RANGE);
+    if (!table) { free(d); return LJ92_ERROR_NO_MEMORY; }
+    for (int k = 0; k < 2 * LJ92_ENC_RANGE; k++) {
+        int diff = k - LJ92_ENC_RANGE, s = lj92_ssss(diff), e = extra[s];
+        /* the code, then the value's low bits: a negative one as diff + 2^s - 1, which in s
+           bits is diff - 1 */
+        uint64_t value = (uint64_t)(uint32_t)(diff - (diff < 0)) & ((1u << e) - 1);
+        table[k] = ((((uint64_t)code[s] << e) | value) << 8) | (uint64_t)(length[s] + e);
+    }
     uint8_t* out = self->encoded;
     int w = self->encodedWritten;
-    const int limit = self->encodedLength - 16;  /* room for a flush with every byte stuffed */
-    uint64_t acc = 0;
+    const int limit = self->encodedLength - 16;  /* room for an 8-byte store, or 7 bytes all stuffed */
+    uint64_t acc = 0;  /* the bits waiting, at its bottom (fewer than 32 between samples) */
     int nbits = 0;
     int ret = LJ92_ERROR_NONE;
     for (int y = 0; y < H && ret == LJ92_ERROR_NONE; y++) {
@@ -1463,32 +1483,43 @@ static int fastEncode(lje* self) {
         lj92_row_diffs(row, y ? row - W : NULL, W, base, d);
         for (int i = 0; i < W; i++) {
             int diff = d[i];
-            int s = lj92_ssss(diff);
-            /* the code, then the value's low bits: a negative one as diff + 2^s - 1, which in
-               s bits is diff - 1 */
-            int e = extra[s];
-            uint32_t value = (uint32_t)(diff - (diff < 0)) & ((1u << e) - 1);
-            acc = (((acc << length[s]) | code[s]) << e) | value;
-            nbits += length[s] + e;
+            uint64_t bits;
+            int len;
+            if ((unsigned)(diff + LJ92_ENC_RANGE) < 2u * LJ92_ENC_RANGE) {
+                uint64_t entry = table[diff + LJ92_ENC_RANGE];
+                bits = entry >> 8;
+                len = (int)(entry & 0xFF);
+            } else {
+                int s = lj92_ssss(diff), e = extra[s];
+                uint64_t value = (uint64_t)(uint32_t)(diff - (diff < 0)) & ((1u << e) - 1);
+                bits = ((uint64_t)code[s] << e) | value;
+                len = length[s] + e;
+            }
+            acc = (acc << len) | bits;  /* at most 31 + 32 bits */
+            nbits += len;
             if (nbits >= 32) {
                 if (w >= limit) { ret = LJ92_ERROR_ENCODER; break; }
-                uint32_t word = (uint32_t)(acc >> (nbits - 32));
-                uint32_t t = ~word;
-                if (((t - 0x01010101u) & ~t & 0x80808080u) == 0) {  /* no 0xFF: 4 bytes at once */
-                    out[w] = (uint8_t)(word >> 24); out[w + 1] = (uint8_t)(word >> 16);
-                    out[w + 2] = (uint8_t)(word >> 8); out[w + 3] = (uint8_t)word;
-                    w += 4;
+                const int n = nbits >> 3;                        /* whole bytes: 4 .. 7 */
+                const uint64_t top = acc << (64 - nbits);         /* them first, from the top */
+                const uint64_t mask = ~0ull << (64 - 8 * n);      /* their bytes */
+                /* a 0xFF among them? (~top has a zero byte there; the others set to 0x01) */
+                const uint64_t t = (~top & mask) | (0x0101010101010101ull & ~mask);
+                if (((t - 0x0101010101010101ull) & ~t & 0x8080808080808080ull) == 0) {
+                    const uint64_t be = lj92_bswap64(top);
+                    memcpy(out + w, &be, 8);  /* (the bytes after the n are written over later) */
+                    w += n;
                 } else {
-                    for (int k = 24; k >= 0; k -= 8) {
-                        uint8_t b = (uint8_t)(word >> k);
+                    for (int k = 0; k < n; k++) {
+                        uint8_t b = (uint8_t)(top >> (56 - 8 * k));
                         out[w++] = b;
                         if (b == 0xFF) out[w++] = 0x00;
                     }
                 }
-                nbits -= 32;
+                nbits -= 8 * n;
             }
         }
     }
+    free(table);
     /* The last bits, whole bytes, then a final byte padded with zeros */
     while (ret == LJ92_ERROR_NONE && nbits > 0) {
         if (w >= self->encodedLength - 1) { ret = LJ92_ERROR_ENCODER; break; }
