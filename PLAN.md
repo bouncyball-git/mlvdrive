@@ -238,7 +238,8 @@ in Resolve.
    - `src/app/mounter`: tree + cache + drive as one object, used by both programs (library
      `mlvdrive_app` with the WinFsp layer).
    - Tray app `mlvdrive_tray.exe` (Win32, no console; `src/tray`): colour / grey icon
-     (mounted / not; `tools/make_icons.py` -> `assets/`), menu: mount, unmount, open in
+     (mounted / not; `tools/make_icons.py` -> `assets/`; since 0.7.0 a drive with a dashed
+     virtual copy behind it, a simpler layout at 24 px and below for the tray), menu: mount, unmount, open in
      Explorer (or double-click), MLV folder (folder picker), drive letter (letters in use
      greyed), DNG format, raw corrections, timecode, test patterns, mount at start, start with
      Windows (HKCU Run), edit / reload the settings file, quit. Mounting on a worker thread; a

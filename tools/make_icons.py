@@ -1,5 +1,6 @@
-"""Draws MLV Drive's icons: colour bars over a drive with a light, in colour (mounted) and grey
-(not mounted), at every size Windows asks for, into assets/mlvdrive.ico and assets/mlvdrive_off.ico.
+"""Draws MLV Drive's icons: a drive with a dashed copy of itself behind it (a virtual drive), in
+blue with a green light (mounted) and in grey with the light off (not mounted), at every size
+Windows asks for, into assets/mlvdrive.ico and assets/mlvdrive_off.ico.
 
     python tools/make_icons.py
 
@@ -13,38 +14,69 @@ import zlib
 SIZES = [16, 20, 24, 32, 40, 48, 64, 256]
 SS = 4  # supersampling
 
-BARS = [(192, 192, 192), (192, 192, 0), (0, 192, 192), (0, 192, 0), (192, 0, 192), (192, 0, 0), (0, 0, 192)]
-BODY = (32, 33, 36)
-SLOT = (58, 61, 65)
-LED_ON = (61, 220, 132)
-LED_OFF = (90, 92, 96)
+# Mounted / not mounted
+COLOURS = {
+    True: dict(top=(59, 130, 246), bottom=(29, 78, 216), edge=(23, 37, 84), face=(30, 64, 175),
+               slot=(147, 197, 253), ghost=(96, 165, 250), led=(52, 211, 153)),
+    False: dict(top=(140, 145, 153), bottom=(100, 106, 115), edge=(45, 50, 58), face=(85, 90, 99),
+                slot=(190, 194, 200), ghost=(156, 163, 175), led=(70, 74, 80)),
+}
+
+# The drive in front and its virtual copy behind (up and to the right): x0, y0, x1, y1, corner;
+# the copy's dashed outline: its width and dash length. Small sizes (the tray at 100%: 16 px)
+# get a bigger drive and fewer, thicker dashes, which stay readable at a few pixels.
+LAYOUT = {
+    False: dict(front=(0.05, 0.38, 0.81, 0.86, 0.11), back=(0.19, 0.14, 0.95, 0.62, 0.11),
+                stroke=0.055, dash=0.105, edge=0.035, led=0.062, slot=0.022),
+    True: dict(front=(0.0, 0.30, 0.86, 0.97, 0.12), back=(0.20, 0.03, 1.0, 0.62, 0.12),
+               stroke=0.105, dash=0.19, edge=0.07, led=0.10, slot=0.045),
+}
 
 
-def grey(c):
-    y = int(0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2])
-    return (y, y, y)
+def round_rect_distance(x, y, x0, y0, x1, y1, r):
+    """Signed distance to a rounded rectangle's edge (< 0 inside)."""
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    hx, hy = (x1 - x0) / 2 - r, (y1 - y0) / 2 - r
+    dx, dy = abs(x - cx) - hx, abs(y - cy) - hy
+    ox, oy = max(dx, 0.0), max(dy, 0.0)
+    return (ox * ox + oy * oy) ** 0.5 + min(max(dx, dy), 0.0) - r
 
 
-def inside_round_rect(x, y, x0, y0, x1, y1, r):
-    if x < x0 or x >= x1 or y < y0 or y >= y1:
+def dashed(x, y, x0, y0, x1, y1, r, stroke, dash):
+    """On the copy's outline, where a dash is (corners always drawn)."""
+    if abs(round_rect_distance(x, y, x0, y0, x1, y1, r)) > stroke / 2:
         return False
-    cx = min(max(x, x0 + r), x1 - r)
-    cy = min(max(y, y0 + r), y1 - r)
-    return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
+    in_corner = (x < x0 + r or x > x1 - r) and (y < y0 + r or y > y1 - r)
+    if in_corner:
+        return True
+    along = x - x0 if (y < y0 + r or y > y1 - r) else y - y0
+    return int(along / dash) % 2 == 0
 
 
-def pixel(u, v, on):
+def pixel(u, v, on, small):
     """The colour at (u, v) in 0..1 coordinates, or None (transparent)."""
-    if not inside_round_rect(u, v, 0.03, 0.03, 0.97, 0.97, 0.16):
-        return None
-    if 0.12 <= u < 0.88 and 0.14 <= v < 0.62:
-        k = min(6, int((u - 0.12) / 0.76 * 7))
-        return BARS[k] if on else grey(BARS[k])
-    if inside_round_rect(u, v, 0.12, 0.70, 0.88, 0.86, 0.04):
-        if (u - 0.78) ** 2 + (v - 0.78) ** 2 <= 0.045 ** 2:
-            return LED_ON if on else LED_OFF
-        return SLOT
-    return BODY
+    c = COLOURS[on]
+    L = LAYOUT[small]
+    x0, y0, x1, y1, r = L['front']
+    d = round_rect_distance(u, v, x0, y0, x1, y1, r)
+    if d <= 0:
+        if d > -L['edge']:
+            return c['edge']  # outline: holds on light and dark taskbars
+        t = (v - y0) / (y1 - y0)
+        face = y0 + (y1 - y0) * 0.56
+        mid = (face + y1) / 2
+        if v > face:  # the front face: a slot and the light
+            led_x = x0 + (x1 - x0) * 0.80
+            if (u - led_x) ** 2 + (v - mid) ** 2 <= L['led'] ** 2:
+                return c['led']
+            if x0 + (x1 - x0) * 0.13 <= u <= x0 + (x1 - x0) * 0.58 and abs(v - mid) <= L['slot']:
+                return c['slot']
+            return c['face']
+        k = t / 0.56  # the top: a gradient
+        return tuple(int(a + (b - a) * k) for a, b in zip(c['top'], c['bottom']))
+    if dashed(u, v, *L['back'], L['stroke'], L['dash']):
+        return c['ghost']
+    return None
 
 
 def draw(size, on):
@@ -56,7 +88,7 @@ def draw(size, on):
             r = g = b = a = 0
             for sy in range(SS):
                 for sx in range(SS):
-                    c = pixel((x * SS + sx + 0.5) / n, (y * SS + sy + 0.5) / n, on)
+                    c = pixel((x * SS + sx + 0.5) / n, (y * SS + sy + 0.5) / n, on, size <= 24)
                     if c is not None:
                         r += c[0]
                         g += c[1]
