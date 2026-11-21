@@ -17,6 +17,7 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 .\build.ps1 uninstall   # removes them (the settings stay)
 .\build.ps1 package     # dist\MLVDrive-<version>-win64.zip: portable (no installer)
 .\build.ps1 setup       # dist\MLVDrive-<version>-setup.exe: the installer (needs Inno Setup 6)
+.\build.ps1 -pkg        # build, then both: what a release needs (also --pkg; clean -pkg from scratch)
 ```
 
 The version is set once, in `CMakeLists.txt` (`project(... VERSION ...)`). `tools/make_icons.py`

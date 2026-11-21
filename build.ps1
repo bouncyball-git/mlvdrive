@@ -1,6 +1,7 @@
 # Builds MLV Drive on Windows (Visual Studio 2022 or its Build Tools, with CMake and Ninja).
 #
 #   .\build.ps1 [clean] [build] [install] [uninstall] [package] [setup] [-Config Release|Debug|RelWithDebInfo]
+#   .\build.ps1 -pkg            (or --pkg, or pkg): build, then the zip and the setup, for a release
 #
 #   clean      deletes the build folder
 #   build      configures (if needed) and builds (the default action):
@@ -20,11 +21,19 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Actions,
-    [ValidateSet('Release', 'Debug', 'RelWithDebInfo')] [string] $Config = 'Release'
+    [ValidateSet('Release', 'Debug', 'RelWithDebInfo')] [string] $Config = 'Release',
+    [switch] $Pkg  # build, package, setup (also written --pkg or pkg among the actions)
 )
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $BuildDir = Join-Path $Root 'build'
+# -pkg / --pkg / pkg: build, then both release files, in place of the word (after any other actions).
+$expanded = @()
+foreach ($a in @($Actions)) {
+    if ($a -in '--pkg', 'pkg') { $Pkg = $true } elseif ($a) { $expanded += $a }
+}
+if ($Pkg) { $expanded += 'build', 'package', 'setup' }
+$Actions = $expanded
 if (-not $Actions) { $Actions = @('build') }
 
 function Step([string] $text) { Write-Host "==> $text" -ForegroundColor Cyan }
@@ -78,7 +87,16 @@ function Use-VisualStudio {
 foreach ($action in $Actions) {
     switch ($action) {
         'clean' {
-            if (Test-Path $BuildDir) { Step "clean: $BuildDir"; Remove-Item -Recurse -Force $BuildDir }
+            if (Test-Path $BuildDir) {
+                Step "clean: $BuildDir"
+                # The folder itself may be held (a window or terminal open in it): emptying it is enough.
+                try { Remove-Item -Recurse -Force $BuildDir }
+                catch {
+                    Get-ChildItem $BuildDir -Force | Remove-Item -Recurse -Force
+                    if (Get-ChildItem $BuildDir -Force) { throw }
+                    Write-Host '    (the folder itself is in use elsewhere: emptied instead)'
+                }
+            }
         }
         'build' {
             # A build folder configured for another source folder (the project moved or was renamed)
