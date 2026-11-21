@@ -49,6 +49,7 @@ int usage() {
                  "  --test-patterns  add a TestPatterns folder: 12 test charts (colour bars, PLUGE, grey\n"
                  "                   scale, crosshatch, safe areas, zone plate...), 5 s each, 1080p25; the\n"
                  "                   MLV folder may then be left out\n"
+                 "  --no-test-patterns  without them (whatever the settings say)\n"
                  "  --no-watch       don't watch the folders (new clips show after `mlvdrive rescan`)\n"
                  "  --cache=MB       finished frames kept in memory (auto: a quarter of the RAM, 512 MB\n"
                  "                   to 16 GB; the default)\n"
@@ -133,6 +134,7 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--timecode=time") s.timecode = dng::Timecode::TimeOfDay;
         else if (a == L"--timecode=count") s.timecode = dng::Timecode::FrameCount;
         else if (a == L"--test-patterns") s.testPatterns = true;
+        else if (a == L"--no-test-patterns") s.testPatterns = false;
         else if (a == L"--no-watch") s.watch = false;
         else if (a == L"--watch") s.watch = true;
         else if (a == L"--debug") debug = true;

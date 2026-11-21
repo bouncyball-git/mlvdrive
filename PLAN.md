@@ -308,6 +308,12 @@ questions below (packed / LJ92 DNG, naming, write access).
 
 ## Testing
 
+- **`tools\test.ps1 -Folders G:\mlv, E:\mlv`** runs the checks below automatically (about a
+  minute; PASS / FAIL, exit code): clips open; selftest per kind and a spanned clip; the four DNG
+  formats read back; the charts; a mount's frames, WAV and chart against the CLI; the cache
+  keeping a long clip's start and real-time reads; a watched folder's add / replace / delete
+  with an open file. Its mounts take a spare letter and give every option (`--no-test-patterns`
+  was added for that). First run (0.2.0): 20 of 20 passed in 60 s. Run it before every release.
 - Test clip: `E:\mlv\M21-1642.MLV`: Canon 5D Mark III, 1920×1080, 14-bit lossless (LJ92),
   261 frames at 23.976 fps, ISO 800, WB 5000 K, stereo audio. Machine: 8 logical CPUs.
 - Test set `G:\mlv` (SATA SSD; 52 clips, ~70 GB, in subfolders), all 14-bit 23.976 fps:

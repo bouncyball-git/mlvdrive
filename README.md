@@ -80,7 +80,7 @@ its start: a clip longer than the cache, played again, finds that part made.
 ```
 mlvdrive mount [MLV folder ...] [M:] [--dng=16|packed] [--no-fix|--fix] [--timecode=time|count]
                [--focus-pixels=auto|on|off] [--bad-pixels=off|auto|aggressive|map]
-               [--test-patterns] [--no-watch] [--cache=MB|auto] [--read-ahead=N] [--debug]
+               [--test-patterns|--no-test-patterns] [--no-watch] [--cache=MB|auto] [--read-ahead=N] [--debug]
 mlvdrive --version
 mlvdrive mount --test-patterns [M:]
 mlvdrive rescan M:
@@ -124,6 +124,21 @@ mlvdrive_cli selftest <clip.MLV>                  every frame: fast decoder and 
 mlvdrive_cli read  <folder>                       reads a mounted clip's DNGs in order: frames/s
     --threads=N  readers (default 1)   --passes=N (default 2)   --buffered  through Windows' cache
 ```
+
+## Testing
+
+```
+.\tools\test.ps1 -Folders G:\mlv, E:\mlv [-Drive N:] [-Keep]
+```
+
+Runs the checks that matter before a release on real clips, in about a minute: every clip opens and
+decodes; per kind of clip (camera, size, bit depth, compression; and a spanned one) every frame
+through the fast decoder equals the original and the vector raw fixes the scalar ones; one frame in
+each DNG format read back; the test charts; a mount (on a spare letter, every option given, so the
+settings file doesn't matter) where each clip's middle frame equals a fresh decode, a WAV and a
+chart equal the CLI's; the cache keeping a long clip's start; read speed above real time; and a
+watched scratch folder where clips copied in, replaced and deleted show as they should while an
+open file keeps reading. Prints PASS / FAIL per check; exit code 0 when all pass.
 
 ## Credits
 
