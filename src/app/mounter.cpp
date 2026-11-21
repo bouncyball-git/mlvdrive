@@ -48,7 +48,7 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
                     std::string* error) {
     unmount();
     if (!fsys::Drive::loadWinFsp(error)) return false;
-    if (s.folder.empty() && !s.testPatterns) {
+    if (s.folders.empty() && !s.testPatterns) {
         if (error) *error = "no MLV folder chosen";
         return false;
     }
@@ -61,10 +61,12 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
 
     auto t0 = std::chrono::steady_clock::now();
     auto tree = std::make_unique<vfs::Tree>();
-    if (!tree->build(s.folder, options, log, error)) return false;
+    if (!tree->build(s.folders, options, log, error)) return false;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (tree->clipCount() == 0) {
-        if (error) *error = "no MLV clips in " + narrow(s.folder);
+        std::string where;
+        for (const auto& f : s.folders) where += (where.empty() ? "" : ", ") + narrow(f);
+        if (error) *error = "no MLV clips in " + where;
         return false;
     }
 

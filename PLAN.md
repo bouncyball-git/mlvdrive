@@ -252,6 +252,12 @@ in Resolve.
    - Checked: the tray app mounts at start from the settings, every menu action (sent as its
      command) changes the drive and the file as it should, quit unmounts; the console mounts
      from the file alone; install / uninstall / reinstall while running.
+   - Several MLV folders (after milestone 7): `folder =` once per folder in the settings,
+     `mlvdrive mount A B [M:]`, the tray menu adds (folder picker) and removes them. Their clips
+     merge at the drive's root (subfolders kept; a clip found twice, as with a folder inside
+     another, shows once, by its full path; clashing names get " (2)"); a folder that can't be
+     read is reported and left out. Checked: E:\mlv + G:\mlv + G:\mlv\Tipebi_Asorti: 54 clip
+     folders, no duplicates, 304 ms; the tray app keeps both folders when it saves.
    - Not done: chroma smoothing and bad pixels as settings (the fixer has them; their defaults
      stay); the cache policy for long clips and a RAM-sized default (proposed, not built).
 8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).

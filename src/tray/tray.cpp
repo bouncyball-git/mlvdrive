@@ -30,9 +30,10 @@ const wchar_t kAppName[] = L"MLV Drive";
 const wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 
 enum MenuId : UINT {
-    kMount = 100, kUnmount, kOpen, kFolder, kDriveAuto, kFormat16, kFormatPacked, kFixes, kTimecodeTime,
+    kMount = 100, kUnmount, kOpen, kAddFolder, kDriveAuto, kFormat16, kFormatPacked, kFixes, kTimecodeTime,
     kTimecodeCount, kPatterns, kMountAtStart, kAutostart, kEditSettings, kReloadSettings, kGetWinFsp, kQuit,
-    kDriveFirst = 200  // + letter index (A = 0)
+    kDriveFirst = 200,         // + letter index (A = 0)
+    kRemoveFolderFirst = 300   // + the folder's index
 };
 
 struct JobResult {
@@ -182,7 +183,8 @@ void SettingsChanged() {
 
 // --- Menu actions ---
 
-bool ChooseFolder() {
+// Asks for a folder to add; true if one was added.
+bool AddFolder() {
     IFileOpenDialog* dialog = nullptr;
     if (FAILED(CoCreateInstance(__uuidof(FileOpenDialog), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))))
         return false;
@@ -190,9 +192,9 @@ bool ChooseFolder() {
     dialog->GetOptions(&options);
     dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
     dialog->SetTitle(L"MLV Drive: the folder of MLV clips (subfolders included)");
-    if (!g_settings.folder.empty()) {
+    if (!g_settings.folders.empty()) {
         IShellItem* start = nullptr;
-        if (SUCCEEDED(SHCreateItemFromParsingName(g_settings.folder.c_str(), nullptr, IID_PPV_ARGS(&start)))) {
+        if (SUCCEEDED(SHCreateItemFromParsingName(g_settings.folders.back().c_str(), nullptr, IID_PPV_ARGS(&start)))) {
             dialog->SetFolder(start);
             start->Release();
         }
@@ -203,9 +205,15 @@ bool ChooseFolder() {
         if (SUCCEEDED(dialog->GetResult(&item))) {
             PWSTR path = nullptr;
             if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
-                g_settings.folder = path;
+                const std::wstring folder = path;
                 CoTaskMemFree(path);
-                chosen = true;
+                bool known = false;
+                for (const auto& f : g_settings.folders)
+                    known = known || CompareStringOrdinal(f.c_str(), -1, folder.c_str(), -1, TRUE) == CSTR_EQUAL;
+                if (!known) {
+                    g_settings.folders.push_back(folder);
+                    chosen = true;
+                }
             }
             item->Release();
         }
@@ -274,15 +282,25 @@ void ShowMenu() {
         item(menu, kOpen, L"Open " + g_info.mountPoint + L" in Explorer");
         item(menu, kUnmount, L"Unmount " + g_info.mountPoint, !busy);
     } else {
-        const bool canMount = !busy && (!g_settings.folder.empty() || g_settings.testPatterns);
+        const bool canMount = !busy && (!g_settings.folders.empty() || g_settings.testPatterns);
         const std::wstring where = g_settings.drive.empty() ? L"the next free letter" : g_settings.drive;
         item(menu, kMount, L"Mount on " + where, canMount);
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    item(menu, kFolder,
-         g_settings.folder.empty() ? L"Choose the MLV folder…" : L"MLV folder: " + Shorten(g_settings.folder, 48) + L"…",
-         !busy);
+    if (g_settings.folders.empty()) {
+        item(menu, kAddFolder, L"Choose an MLV folder…", !busy);
+    } else {
+        HMENU folders = CreatePopupMenu();
+        for (size_t i = 0; i < g_settings.folders.size() && i < 50; ++i)
+            item(folders, kRemoveFolderFirst + UINT(i), L"Remove " + Shorten(g_settings.folders[i], 60));
+        AppendMenuW(folders, MF_SEPARATOR, 0, nullptr);
+        item(folders, kAddFolder, L"Add a folder…");
+        const size_t n = g_settings.folders.size();
+        const std::wstring label = n == 1 ? L"MLV folder: " + Shorten(g_settings.folders[0], 48)
+                                          : L"MLV folders: " + std::to_wstring(n);
+        AppendMenuW(menu, MF_POPUP | (busy ? MF_GRAYED : 0), reinterpret_cast<UINT_PTR>(folders), label.c_str());
+    }
 
     HMENU drives = CreatePopupMenu();
     radio(drives, kDriveAuto, L"Next free letter (from Z: down)", g_settings.drive.empty());
@@ -348,8 +366,8 @@ void Command(UINT id) {
         case kUnmount: StartJob(false, true); return;
         case kOpen: OpenDrive(); return;
         case kGetWinFsp: ShellExecuteW(nullptr, L"open", L"https://winfsp.dev/rel/", nullptr, nullptr, SW_SHOWNORMAL); return;
-        case kFolder:
-            if (ChooseFolder()) {
+        case kAddFolder:
+            if (AddFolder()) {
                 SettingsChanged();
                 if (g_state == State::Unmounted && g_winfsp) StartJob(true, true);
             }
@@ -382,6 +400,12 @@ void Command(UINT id) {
             if (id >= kDriveFirst && id < kDriveFirst + 26) {
                 g_settings.drive = std::wstring(1, wchar_t(L'A' + (id - kDriveFirst))) + L":";
                 SettingsChanged();
+            } else if (id >= kRemoveFolderFirst && id < kRemoveFolderFirst + g_settings.folders.size()) {
+                g_settings.folders.erase(g_settings.folders.begin() + (id - kRemoveFolderFirst));
+                SettingsChanged();
+                // Nothing left to show: unmount.
+                if (g_settings.folders.empty() && !g_settings.testPatterns && g_state != State::Unmounted)
+                    StartJob(false, false);
             }
     }
 }
@@ -453,7 +477,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     } else if (firstRun) {
         app::saveSettings(g_settingsPath, g_settings, &error);
         Balloon(kAppName, L"Right-click the icon to choose your MLV folder.", false);
-    } else if (g_settings.mountAtStart && (!g_settings.folder.empty() || g_settings.testPatterns)) {
+    } else if (g_settings.mountAtStart && (!g_settings.folders.empty() || g_settings.testPatterns)) {
         StartJob(true, false);
     }
 

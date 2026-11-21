@@ -1,7 +1,8 @@
 // The drive's settings, kept in %APPDATA%\MLV Drive\mlvdrive.ini (UTF-8):
 //
 //   [mount]
-//   folder = E:\mlv            ; the MLV folder (clips in its subfolders too)
+//   folder = E:\mlv            ; an MLV folder (clips in its subfolders too); one line each,
+//   folder = G:\mlv            ; their clips merged on the drive
 //   drive = M:                 ; empty: the next free letter from Z: down
 //   test_patterns = false      ; add the TestPatterns folder
 //   mount_at_start = true      ; the tray app mounts when it starts
@@ -25,7 +26,7 @@
 namespace app {
 
 struct Settings {
-    std::wstring folder;
+    std::vector<std::wstring> folders;  // the MLV folders, merged on the drive
     std::wstring drive = L"M:";
     bool testPatterns = false;
     bool mountAtStart = true;

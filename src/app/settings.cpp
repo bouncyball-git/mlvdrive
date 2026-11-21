@@ -99,7 +99,9 @@ Settings loadSettings(const std::wstring& path, std::vector<std::string>* warnin
         const std::string key = Lower(Trim(line.substr(0, eq)));
         const std::string value = Trim(line.substr(eq + 1));
         bool ok = true;
-        if (key == "folder") s.folder = Wide(value);
+        if (key == "folder") {
+            if (!value.empty()) s.folders.push_back(Wide(value));
+        }
         else if (key == "drive") s.drive = normalizeDrive(Wide(value));
         else if (key == "test_patterns") ok = ParseBool(value, &s.testPatterns);
         else if (key == "mount_at_start") ok = ParseBool(value, &s.mountAtStart);
@@ -151,7 +153,9 @@ bool saveSettings(const std::wstring& path, const Settings& s, std::string* erro
     t += std::string("; MLV Drive settings (UTF-8). The tray app writes this file; the console program") + nl;
     t += std::string("; takes it as its defaults.") + nl;
     t += std::string("[mount]") + nl;
-    line("folder", Utf8(s.folder));
+    if (s.folders.empty()) line("folder", "", "an MLV folder; one line each, merged on the drive");
+    for (size_t i = 0; i < s.folders.size(); ++i)
+        line("folder", Utf8(s.folders[i]), i == 0 ? "an MLV folder; one line each, merged on the drive" : nullptr);
     line("drive", Utf8(s.drive), "empty: the next free letter from Z: down");
     line("test_patterns", s.testPatterns ? "true" : "false");
     line("mount_at_start", s.mountAtStart ? "true" : "false", "the tray app mounts when it starts");

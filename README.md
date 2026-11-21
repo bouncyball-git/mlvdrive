@@ -23,7 +23,7 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 
 "MLV Drive" (`mlvdrive_tray.exe`) sits in the notification area: its icon is in colour while the
 drive is mounted, grey when not. Right-click (or click) it for the menu: mount and unmount, open the
-drive in Explorer (double-click does too), choose the MLV folder, the drive letter, the DNG format,
+drive in Explorer (double-click does too), add and remove MLV folders, the drive letter, the DNG format,
 raw corrections, timecode and the test patterns, mount when it starts, start with Windows, edit the
 settings file. A change while mounted mounts again with it. WinFsp must be installed
 (https://winfsp.dev/rel/); the menu says so if it isn't.
@@ -34,7 +34,8 @@ settings file. A change while mounted mounts again with it. WinFsp must be insta
 
 ```
 [mount]
-folder = E:\mlv             ; the MLV folder (subfolders included)
+folder = E:\mlv             ; an MLV folder (subfolders included); one line each,
+folder = G:\mlv             ; all their clips merged on the drive
 drive = M:                  ; empty: the next free letter from Z: down
 test_patterns = false
 mount_at_start = true       ; the tray app mounts when it starts
@@ -50,21 +51,23 @@ read_ahead = auto           ; auto (one per CPU) or a number of frames
 ## Mounting from the command line
 
 ```
-mlvdrive mount [MLV folder] [M:] [--dng=16|packed] [--no-fix|--fix] [--timecode=time|count]
+mlvdrive mount [MLV folder ...] [M:] [--dng=16|packed] [--no-fix|--fix] [--timecode=time|count]
                [--test-patterns] [--cache=MB] [--read-ahead=N] [--debug]
 mlvdrive mount --test-patterns [M:]
 mlvdrive unmount M:
 ```
 
-The settings file gives the defaults (with a folder set there, `mlvdrive mount` alone mounts it);
-the options override them. `mlvdrive unmount M:` also unmounts the tray app's drive.
+The settings file gives the defaults: with folders set there, `mlvdrive mount` alone mounts them.
+Folders and options given on the command line override it. `mlvdrive unmount M:` also unmounts the
+tray app's drive.
 
 `--test-patterns` adds a `TestPatterns` folder of 12 test charts, 5 seconds each (1080p25,
 timecode from 10:00:00:00): SMPTE RP 219 HD bars, SMPTE bars, EBU 100% and 75% bars, PLUGE, grey
 scale, ramps, crosshatch, framing and safe areas, checkerboard, multiburst, zone plate. Their DNGs
 state linear Rec.709 colour, so a raw developer with Rec.709 gamma shows the charts' levels.
 
-Every MLV clip under the folder (subfolders included) shows as a folder of DNG files,
+Every MLV clip under the folders (subfolders included; several folders merge, a clip found twice
+shows once, names that clash get " (2)") shows as a folder of DNG files,
 `NAME\NAME_000000.dng` onward, made when they are read, and `NAME\NAME.wav` when the clip has
 audio (Broadcast WAVE, lined up with the first frame). The DNG timecode and the WAV's time
 reference are the time of day the clip was recorded (`--timecode=count`: from 00:00:00:00), so

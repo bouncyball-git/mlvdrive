@@ -140,28 +140,42 @@ std::wstring Tree::frameName(const ClipEntry& clip, uint32_t frame) {
     return clip.name + digits;
 }
 
-bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
+bool Tree::build(const std::vector<std::wstring>& folders, const BuildOptions& options,
                  const std::function<void(const std::string&)>& log, std::string* error) {
-    const fs::path source(sourceFolder);
     std::error_code ec;
-    // --- The clips: every .MLV under the folder (its .M00, .M01 ... are opened with it); no
-    //     folder: none (the test patterns alone) ---
-    std::vector<fs::path> paths;
-    if (!sourceFolder.empty()) {
-        if (!fs::is_directory(source, ec)) {
-            if (error) *error = "not a folder: " + util::u8(source);
-            return false;
-        }
-        fs::recursive_directory_iterator it(source, fs::directory_options::skip_permission_denied, ec);
+    // --- The clips: every .MLV under each folder (its .M00, .M01 ... are opened with it), with
+    //     its folder relative to that one; a clip found twice (a folder listed twice, or inside
+    //     another) counts once. A folder that can't be read is reported and left out. ---
+    std::vector<fs::path> paths, rels;
+    std::vector<std::wstring> seen;  // the clips' full paths, upper case
+    for (const std::wstring& folder : folders) {
+        if (folder.empty()) continue;
+        const fs::path source(folder);
+        fs::recursive_directory_iterator it;
+        if (fs::is_directory(source, ec)) it = fs::recursive_directory_iterator(source, fs::directory_options::skip_permission_denied, ec);
+        else ec = std::make_error_code(std::errc::not_a_directory);
         if (ec) {
-            if (error) *error = "can't read " + util::u8(source) + ": " + ec.message();
-            return false;
+            if (log) log("skipped folder " + util::u8(source) + ": " + ec.message());
+            ec.clear();
+            continue;
         }
+        std::vector<fs::path> found;
         for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
             if (ec) break;
-            if (it->is_regular_file(ec) && isMlv(it->path())) paths.push_back(it->path());
+            if (it->is_regular_file(ec) && isMlv(it->path())) found.push_back(it->path());
         }
-        std::sort(paths.begin(), paths.end());
+        ec.clear();
+        std::sort(found.begin(), found.end());
+        for (const fs::path& p : found) {
+            std::wstring key = fs::weakly_canonical(p, ec).wstring();
+            if (ec) key = p.wstring();
+            ec.clear();
+            for (auto& ch : key) ch = wchar_t(std::towupper(wint_t(ch)));
+            if (std::find(seen.begin(), seen.end(), key) != seen.end()) continue;
+            seen.push_back(key);
+            paths.push_back(p);
+            rels.push_back(p.parent_path().lexically_relative(source));
+        }
     }
 
     // Opened on several threads: a clip is indexed by reading every block header of every chunk.
@@ -211,7 +225,7 @@ bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
             return false;
         }
         Dir* parent = &root_;
-        for (const auto& part : paths[i].parent_path().lexically_relative(source)) {
+        for (const auto& part : rels[i]) {
             std::wstring name = part.wstring();
             if (name == L"." || name.empty()) continue;
             Dir* d = childDir(parent, name);

@@ -1,6 +1,6 @@
 // mlvdrive: shows the MLV clips under a folder as a drive of CinemaDNG sequences (console).
 //
-//   mlvdrive mount [MLV folder] [M:] [options]
+//   mlvdrive mount [MLV folder ...] [M:] [options]
 //   mlvdrive unmount <M:>
 //
 // mount takes its defaults from the settings file (app/settings.h; the tray app writes it) and
@@ -28,10 +28,10 @@ BOOL WINAPI onConsoleEvent(DWORD) {
 
 int usage() {
     std::fprintf(stderr,
-                 "usage: mlvdrive mount [MLV folder] [M:] [options]\n"
+                 "usage: mlvdrive mount [MLV folder ...] [M:] [options]\n"
                  "       mlvdrive unmount <M:>\n"
-                 "  Shows every MLV clip under the folder as a folder of DNG files. The folder, the drive\n"
-                 "  letter and the options default to the settings file:\n"
+                 "  Shows every MLV clip under the folders (merged) as a folder of DNG files. The folders,\n"
+                 "  the drive letter and the options default to the settings file:\n"
                  "    %s\n"
                  "  --dng=16         16-bit uncompressed DNG (the default)\n"
                  "  --dng=packed     uncompressed, packed to the clip's bit depth (smaller)\n"
@@ -103,17 +103,13 @@ int wmain(int argc, wchar_t** argv) {
         else if (a.rfind(L"--", 0) == 0) return usage();
         else positional.push_back(a);
     }
-    // [folder] [M:]: a lone drive letter is the drive, anything else the folder (replacing the
-    // settings').
-    if (positional.size() > 2) return usage();
-    if (positional.size() == 2) {
-        s.folder = positional[0];
-        s.drive = app::normalizeDrive(positional[1]);
-    } else if (positional.size() == 1) {
-        if (isDriveLetter(positional[0])) s.drive = app::normalizeDrive(positional[0]);
-        else s.folder = positional[0];
+    // [folder ...] [M:]: a drive letter last is the drive; folders given replace the settings'.
+    if (!positional.empty() && isDriveLetter(positional.back())) {
+        s.drive = app::normalizeDrive(positional.back());
+        positional.pop_back();
     }
-    if (s.folder.empty() && !s.testPatterns) {
+    if (!positional.empty()) s.folders = positional;
+    if (s.folders.empty() && !s.testPatterns) {
         std::fprintf(stderr, "no MLV folder: give one, or set folder = in %s\n\n",
                      app::narrow(app::settingsPath()).c_str());
         return usage();
@@ -126,7 +122,9 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
     const app::MountInfo& info = mounter.info();
-    const std::string what = s.folder.empty() ? std::string("test patterns") : app::narrow(s.folder);
+    std::string what;
+    for (const auto& f : s.folders) what += (what.empty() ? "" : ", ") + app::narrow(f);
+    if (what.empty()) what = "test patterns";
     std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", what.c_str(), info.clips,
                 info.clips == 1 ? "" : "s", info.bytes / 1e9, info.openMs);
     std::printf("Mounted on %s (cache %u MB, read-ahead %u). Ctrl+C unmounts.\n", app::narrow(info.mountPoint).c_str(),

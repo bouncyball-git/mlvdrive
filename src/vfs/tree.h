@@ -4,7 +4,8 @@
 //                                   \M21-1642\M21-1642.wav (if it has audio)
 //   E:\mlv\day2\M22-0901.MLV    ->  \day2\M22-0901\M22-0901_000000.dng ...
 //
-// Subfolders holding clips are kept; everything else in the source folder is left out. Every
+// Several source folders merge at the root (a clip found in two counts once; names that clash get
+// " (2)"). Subfolders holding clips are kept; everything else in a source folder is left out. Every
 // name, size and date is known once the clips are opened: no frame is made to list the tree.
 // With the test patterns on, a clip folder "TestPatterns" of generated frames is added too.
 // The tree doesn't change after it is built, so any number of threads may read it.
@@ -64,9 +65,10 @@ struct BuildOptions {
 
 class Tree {
 public:
-    // Finds and opens the clips under `sourceFolder`. `log` is told about clips that can't be
-    // opened. False (with `error`) if the folder can't be read.
-    bool build(const std::wstring& sourceFolder, const BuildOptions& options,
+    // Finds and opens the clips under the folders, their contents merged at the root. `log` is
+    // told about folders that can't be read and clips that can't be opened (both left out).
+    // False (with `error`) only for settings the drive can't use.
+    bool build(const std::vector<std::wstring>& folders, const BuildOptions& options,
                const std::function<void(const std::string&)>& log, std::string* error);
 
     const Dir& root() const { return root_; }
