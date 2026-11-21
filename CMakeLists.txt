@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(MLVDrive VERSION 0.2.0 LANGUAGES C CXX)
+project(MLVDrive VERSION 0.7.0 LANGUAGES C CXX)
 # The version everywhere: the programs, the DNG Software tag, the tray app's resources and the
 # release zip's name (build.ps1 reads it from the line above).
 add_compile_definitions(MLVDRIVE_VERSION="${PROJECT_VERSION}")
