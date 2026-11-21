@@ -95,6 +95,9 @@ if(WIN32)
     set(MLVDRIVE_ICON_OFF "${CMAKE_CURRENT_SOURCE_DIR}/assets/mlvdrive_off.ico")
     set(MLVDRIVE_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/tray/tray.manifest")
     configure_file(src/tray/tray.rc.in "${CMAKE_CURRENT_BINARY_DIR}/tray.rc" @ONLY)
+    # The resource compiler's inputs: CMake doesn't see them, so a changed icon wouldn't rebuild it.
+    set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/tray.rc" PROPERTIES
+        OBJECT_DEPENDS "${MLVDRIVE_ICON_ON};${MLVDRIVE_ICON_OFF};${MLVDRIVE_MANIFEST}")
     add_executable(mlvdrive_tray WIN32 src/tray/tray.cpp "${CMAKE_CURRENT_BINARY_DIR}/tray.rc")
     target_link_libraries(mlvdrive_tray PRIVATE mlvdrive_app comctl32)
     target_link_options(mlvdrive_tray PRIVATE /MANIFEST:NO)  # tray.rc has it
