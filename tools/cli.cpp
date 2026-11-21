@@ -6,8 +6,13 @@
 //                                                       frame decoded and corrected now
 //   mlvdrive_cli bench <clip.MLV> [frames]              ms a frame per stage, then frames/s on
 //                                                       every thread
+//   mlvdrive_cli read  <folder>                         reads every .dng in a folder (a clip's
+//                                                       folder on the drive) in name order:
+//                                                       frames/s, MB/s, ms a file
 //
 // Options (dng, check, bench): --dng=16|packed|lj92|pass  (default 16), --no-fix (no raw corrections)
+// Options (read): --threads=N readers at once (default 1), --passes=N (default 2), --buffered
+//                 (through Windows' file cache; by default unbuffered, what the drive itself gives)
 #include "dng/dng_writer.h"
 #include "liblj92/lj92.h"
 #include "mlv/clip.h"
@@ -21,11 +26,18 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -40,7 +52,8 @@ int usage() {
                  "usage: mlvdrive_cli info  <clip.MLV> [frame]\n"
                  "       mlvdrive_cli dng   <clip.MLV> <frame> <out.dng> [--dng=16|packed|lj92|pass] [--no-fix]\n"
                  "       mlvdrive_cli check <clip.MLV> <frame> <file.dng> [--no-fix]\n"
-                 "       mlvdrive_cli bench <clip.MLV> [frames] [--dng=16|packed|lj92|pass] [--no-fix]\n");
+                 "       mlvdrive_cli bench <clip.MLV> [frames] [--dng=16|packed|lj92|pass] [--no-fix]\n"
+                 "       mlvdrive_cli read  <folder> [--threads=N] [--passes=N] [--buffered]\n");
     return 2;
 }
 
@@ -48,6 +61,9 @@ struct Args {
     std::vector<std::string> positional;
     dng::Output output = dng::Output::Uncompressed16;
     bool fix = true;
+    int threads = 1;
+    int passes = 2;
+    bool buffered = false;
 };
 
 bool parseArgs(int argc, char** argv, Args* a) {
@@ -62,6 +78,12 @@ bool parseArgs(int argc, char** argv, Args* a) {
             else if (v == "lj92") a->output = dng::Output::Lossless;
             else if (v == "pass") a->output = dng::Output::PassThrough;
             else return false;
+        } else if (s.rfind("--threads=", 0) == 0) {
+            a->threads = std::max(1, std::atoi(s.c_str() + 10));
+        } else if (s.rfind("--passes=", 0) == 0) {
+            a->passes = std::max(1, std::atoi(s.c_str() + 9));
+        } else if (s == "--buffered") {
+            a->buffered = true;
         } else if (s.rfind("--", 0) == 0) {
             return false;
         } else {
@@ -453,6 +475,110 @@ int bench(const Args& a) {
     return 0;
 }
 
+// --- read ---
+
+// Reads a whole file in 1 MB pieces; the bytes read, or -1.
+int64_t readWholeFile(const std::filesystem::path& path, uint8_t* buffer, size_t size, bool buffered) {
+#ifdef _WIN32
+    DWORD flags = FILE_FLAG_SEQUENTIAL_SCAN | (buffered ? 0 : FILE_FLAG_NO_BUFFERING);
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, flags, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    int64_t total = 0;
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(h, buffer, DWORD(size), &got, nullptr)) {
+            if (GetLastError() == ERROR_HANDLE_EOF) break;
+            total = -1;
+            break;
+        }
+        total += got;
+        if (got < size) break;
+    }
+    CloseHandle(h);
+    return total;
+#else
+    (void)buffered;
+    std::FILE* f = util::openFile(util::u8(path), "rb");
+    if (!f) return -1;
+    int64_t total = 0;
+    size_t got;
+    while ((got = std::fread(buffer, 1, size, f)) > 0) total += int64_t(got);
+    std::fclose(f);
+    return total;
+#endif
+}
+
+int readFolder(const Args& a) {
+    if (a.positional.size() != 1) return usage();
+    namespace fs = std::filesystem;
+    const fs::path folder = util::u8(a.positional[0]);
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (const auto& e : fs::directory_iterator(folder, ec)) {
+        std::string ext = util::u8(e.path().extension());
+        for (auto& ch : ext) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+        if (ext == ".dng") files.push_back(e.path());
+    }
+    if (ec || files.empty()) {
+        std::fprintf(stderr, "no .dng files in %s\n", a.positional[0].c_str());
+        return 1;
+    }
+    std::sort(files.begin(), files.end());
+    std::printf("%s: %zu files, %d reader%s, %s\n", a.positional[0].c_str(), files.size(), a.threads,
+                a.threads == 1 ? "" : "s", a.buffered ? "buffered (Windows' cache)" : "unbuffered");
+
+    constexpr size_t kChunk = 1 << 20;
+    for (int pass = 1; pass <= a.passes; ++pass) {
+        std::atomic<size_t> next{0};
+        std::atomic<uint64_t> bytes{0};
+        std::atomic<bool> failed{false};
+        std::mutex timesMutex;
+        std::vector<double> times;
+        auto t0 = Clock::now();
+        std::vector<std::thread> readers;
+        for (int t = 0; t < a.threads; ++t) {
+            readers.emplace_back([&] {
+                // Unbuffered reads need a buffer aligned to the sector size.
+                std::unique_ptr<uint8_t, void (*)(void*)> buffer(
+                    static_cast<uint8_t*>(
+#ifdef _WIN32
+                        _aligned_malloc(kChunk, 4096)),
+                    _aligned_free);
+#else
+                        std::aligned_alloc(4096, kChunk)),
+                    std::free);
+#endif
+                std::vector<double> mine;
+                for (size_t i; (i = next++) < files.size();) {
+                    auto f0 = Clock::now();
+                    int64_t n = readWholeFile(files[i], buffer.get(), kChunk, a.buffered);
+                    if (n < 0) {
+                        failed = true;
+                        return;
+                    }
+                    mine.push_back(msSince(f0));
+                    bytes += uint64_t(n);
+                }
+                std::lock_guard<std::mutex> lock(timesMutex);
+                times.insert(times.end(), mine.begin(), mine.end());
+            });
+        }
+        for (auto& r : readers) r.join();
+        const double ms = msSince(t0);
+        if (failed) {
+            std::fprintf(stderr, "a read failed\n");
+            return 1;
+        }
+        std::sort(times.begin(), times.end());
+        double sum = 0;
+        for (double t : times) sum += t;
+        std::printf("pass %d: %.1f frames/s, %.0f MB/s; ms a file: mean %.1f, median %.1f, worst %.1f\n", pass,
+                    files.size() * 1000.0 / ms, bytes / 1e3 / ms, sum / times.size(), times[times.size() / 2],
+                    times.back());
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -465,6 +591,7 @@ int main(int argc, char** argv) {
     else if (cmd == "dng") rc = writeDng(a);
     else if (cmd == "check") rc = check(a);
     else if (cmd == "bench") rc = bench(a);
+    else if (cmd == "read") rc = readFolder(a);
     else return usage();
     par::shutdown();
     return rc;

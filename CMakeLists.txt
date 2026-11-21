@@ -47,7 +47,7 @@ else()
 endif()
 
 # --- The drive's contents: clips found under a folder, as folders of DNG files ---
-add_library(mlv_vfs STATIC src/vfs/tree.cpp)
+add_library(mlv_vfs STATIC src/vfs/tree.cpp src/vfs/frame_cache.cpp)
 target_link_libraries(mlv_vfs PUBLIC mlv_core)
 if(MSVC)
     target_compile_options(mlv_vfs PRIVATE /W3 /O2)

@@ -1,9 +1,10 @@
 // The drive on Windows: the tree (vfs::Tree) as a read-only WinFsp volume, through WinFsp's native
 // API. A DNG's bytes are made when the file is read: its header alone for reads of the start, the
-// whole file (frame decoded and corrected) for anything further; an open file keeps what it made
-// until it is closed.
+// whole file (frame decoded and corrected, through the frame cache, which reads ahead) for
+// anything further; an open file holds it until its handle is closed.
 #pragma once
 
+#include "vfs/frame_cache.h"
 #include "vfs/tree.h"
 
 #include <memory>
@@ -13,7 +14,7 @@ namespace fsys {
 
 class Drive {
 public:
-    explicit Drive(const vfs::Tree& tree);
+    Drive(const vfs::Tree& tree, vfs::FrameCache& cache);
     ~Drive();
     Drive(const Drive&) = delete;
     Drive& operator=(const Drive&) = delete;

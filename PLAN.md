@@ -162,10 +162,27 @@ in Resolve.
    - **Found after:** an open file's frame lives until WinFsp's Close, which with Windows
      caching file data comes only when the cache drops the file: the process grew to ~1 GB
      (every frame read). Fix first in milestone 4: free it at Cleanup.
-4. **Speed**: free a file's frame at Cleanup (`PostCleanupWhenModifiedOnly = 0`), LRU cache,
-   read-ahead, WinFsp tuning.
-   - Measure: frames/s reading a mounted sequence (a CLI reader, then Resolve playback).
-   - Target: real-time 1080p24 with corrections, and as close as possible at UHD.
+4. **Speed** (done):
+   - `src/vfs/frame_cache`: finished DNGs shared by all readers, LRU limited in bytes
+     (`--cache=MB`, default 512); a frame being made is waited for, never made twice.
+   - Read-ahead on one worker per CPU (`--read-ahead=N`, default one per CPU, 0 off): a read
+     just after the previous one (going forward) queues the next N frames; a jump drops the
+     queue and starts nothing until reads go forward again (random reads made 8 frames each
+     for nothing before that rule).
+   - An open file holds a reference into the cache, released at Cleanup
+     (`PostCleanupWhenModifiedOnly = 0`); reads after it (from Windows' cache) fetch again.
+     Memory now stays at the cache size (552 MB with 512 MB of cache; it grew to ~1 GB before).
+   - `mlvdrive unmount M:` (a named event the mount waits on) unmounts cleanly and prints the
+     cache's counts; `mlvdrive_cli read <folder> [--threads=N] [--passes=N] [--buffered]`
+     reads a mounted sequence unbuffered (what the drive itself gives).
+   - Test clip, 16-bit with corrections, unbuffered, one reader in order: 49.5 frames/s without
+     read-ahead -> 142 frames/s first pass, 261 second (11x real time); 2 readers 268 (the CPU
+     is the limit); every frame made ahead was read. Random order: 23 ms a frame. Frames made
+     ahead are byte-identical (`check`).
+   - Not done (not needed for 1080p): WinFsp tuning; faster single-frame making (LJ92
+     decoder: wider bit-reader refills; decoding one frame on several threads by Huffman
+     resynchronisation, ~4-5x lower latency per frame, no throughput gain; stripe fix merged
+     into the decode). Worth it for UHD / 5.7K latency: measure on such a clip first.
 5. **Audio + timecode**: `<name>.wav` (BWF with the clip's timecode, mlvtoolbox `wav.cpp`),
    DNG TimeCodes as time of day (the writer has it: `Timecode::TimeOfDay`), so Resolve syncs
    audio automatically.

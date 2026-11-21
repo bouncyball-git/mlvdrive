@@ -1,0 +1,89 @@
+// Finished DNG files, shared by every reader: an LRU limited in bytes, and read-ahead on worker
+// threads so that a player reading frames in order finds them made.
+//
+// A frame asked for while it is being made (by read-ahead or another reader) is waited for, not
+// made twice. Read-ahead: reading frame N just after N-1 (reads going forward) queues N+1 ...
+// N+depth of its clip; a read far from the last one (a jump) drops what was queued for that clip
+// and not started, and starts nothing until the next read in order.
+#pragma once
+
+#include "vfs/tree.h"
+
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
+#include <list>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace vfs {
+
+using FrameData = std::shared_ptr<const std::vector<uint8_t>>;
+
+class FrameCache {
+public:
+    // `maxBytes`: what the cache keeps (frames in use are kept as well, outside the count).
+    // `threads`: read-ahead workers (0: none). `depth`: frames read ahead of the last one read.
+    FrameCache(uint64_t maxBytes, unsigned threads, unsigned depth);
+    ~FrameCache();
+    FrameCache(const FrameCache&) = delete;
+    FrameCache& operator=(const FrameCache&) = delete;
+
+    // The whole DNG of a frame: from the cache, or made now. Null (with `error`) if it can't be.
+    // `readAhead` queues the frames after it.
+    FrameData get(const ClipEntry& clip, uint32_t frame, bool readAhead, std::string* error);
+
+    struct Stats {
+        uint64_t hits = 0;          // found made
+        uint64_t waits = 0;         // found being made (waited for)
+        uint64_t misses = 0;        // made for the reader
+        uint64_t readAhead = 0;     // made ahead
+        uint64_t readAheadUsed = 0; // of those, read
+        uint64_t dropped = 0;       // queued ahead, then dropped by a jump
+        uint64_t bytes = 0;         // in the cache now
+    };
+    Stats stats() const;
+
+private:
+    struct Key {
+        const ClipEntry* clip;
+        uint32_t frame;
+        bool operator<(const Key& o) const { return clip != o.clip ? clip < o.clip : frame < o.frame; }
+    };
+    struct Entry {
+        FrameData data;              // null while being made
+        bool failed = false;
+        bool ahead = false;          // made by read-ahead and not read yet
+        std::string error;
+        std::list<Key>::iterator lru;  // valid once made
+    };
+    struct ClipState {
+        int64_t last = -1;           // the last frame read
+    };
+
+    FrameData make(const ClipEntry& clip, uint32_t frame, std::string* error);
+    void finish(const Key& key, FrameData data, const std::string& error, bool ahead);
+    void queueAhead(const ClipEntry& clip, uint32_t frame);  // under mutex_
+    void evict();                                            // under mutex_
+    void worker();
+
+    const uint64_t maxBytes_;
+    const unsigned depth_;
+    mutable std::mutex mutex_;
+    std::condition_variable made_;    // an entry was finished
+    std::condition_variable work_;    // a job was queued, or stopping
+    std::map<Key, Entry> entries_;
+    std::list<Key> lru_;              // made entries, most recent first
+    uint64_t bytes_ = 0;
+    std::deque<Key> queue_;           // read-ahead jobs
+    std::map<const ClipEntry*, ClipState> clips_;
+    Stats stats_;
+    bool stopping_ = false;
+    std::vector<std::thread> workers_;
+};
+
+}  // namespace vfs

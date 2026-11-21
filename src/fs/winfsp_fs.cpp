@@ -33,25 +33,28 @@ std::string ntError(const char* what, NTSTATUS status) {
     return text;
 }
 
-// What an open file or folder keeps until it is closed.
+// What an open file or folder keeps until it is closed. A file's bytes are only kept until its
+// handle is closed (Cleanup): WinFsp's Close comes much later, when Windows' cache lets the file
+// go, and reads that come in between (from that cache) fetch the frame again.
 struct FileContext {
     vfs::Node node;
-    PVOID dirBuffer = nullptr;  // folders: WinFsp's directory buffer
-    std::mutex mutex;           // files: Read can come on several threads at once
+    PVOID dirBuffer = nullptr;    // folders: WinFsp's directory buffer
+    std::mutex mutex;             // files: Read can come on several threads at once
     std::vector<uint8_t> header;  // the DNG's header alone (reads of the start)
-    std::vector<uint8_t> file;    // the whole DNG, once anything past the header is read
+    vfs::FrameData file;          // the whole DNG (shared with the cache), once anything past the header is read
 };
 
 }  // namespace
 
 struct Drive::Impl {
     const vfs::Tree& tree;
+    vfs::FrameCache& cache;
     FSP_FILE_SYSTEM* fileSystem = nullptr;
     PSECURITY_DESCRIPTOR security = nullptr;  // the same for everything: read-only for everyone
     ULONG securitySize = 0;
     std::wstring mountPoint;
 
-    explicit Impl(const vfs::Tree& t) : tree(t) {}
+    Impl(const vfs::Tree& t, vfs::FrameCache& c) : tree(t), cache(c) {}
 
     static Impl* of(FSP_FILE_SYSTEM* fs) { return static_cast<Impl*>(fs->UserContext); }
 
@@ -145,6 +148,13 @@ struct Drive::Impl {
         return STATUS_MEDIA_WRITE_PROTECTED;
     }
 
+    static VOID Cleanup(FSP_FILE_SYSTEM* /*fs*/, PVOID context, PWSTR /*name*/, ULONG /*flags*/) {
+        auto* ctx = static_cast<FileContext*>(context);
+        std::lock_guard<std::mutex> lock(ctx->mutex);
+        ctx->file.reset();
+        ctx->header = std::vector<uint8_t>();
+    }
+
     static VOID Close(FSP_FILE_SYSTEM* /*fs*/, PVOID context) {
         auto* ctx = static_cast<FileContext*>(context);
         FspFileSystemDeleteDirectoryBuffer(&ctx->dirBuffer);
@@ -163,22 +173,21 @@ struct Drive::Impl {
         const uint64_t end = std::min<uint64_t>(size, offset + length);
 
         std::lock_guard<std::mutex> lock(ctx->mutex);
-        const std::vector<uint8_t>* bytes = &ctx->file;
-        if (ctx->file.empty()) {
+        const std::vector<uint8_t>* bytes = ctx->file.get();
+        if (!bytes) {
             if (end <= c.writer->headerSize()) {
                 if (ctx->header.empty() && !c.writer->renderHeader(ctx->node.frame, ctx->header))
                     return STATUS_UNEXPECTED_IO_ERROR;
                 bytes = &ctx->header;
             } else {
-                thread_local dng::Writer::Scratch scratch;
                 std::string error;
-                if (!c.writer->renderFrame(ctx->node.frame, ctx->file, scratch, &error)) {
+                ctx->file = self->cache.get(c, ctx->node.frame, true, &error);
+                if (!ctx->file) {
                     std::fprintf(stderr, "%s frame %u: %s\n", narrow(c.name).c_str(), ctx->node.frame, error.c_str());
-                    ctx->file.clear();
                     return STATUS_UNEXPECTED_IO_ERROR;
                 }
-                ctx->header.clear();
-                ctx->header.shrink_to_fit();
+                bytes = ctx->file.get();
+                ctx->header = std::vector<uint8_t>();
             }
         }
         if (bytes->size() < end) return STATUS_UNEXPECTED_IO_ERROR;  // not the size listed: a bug
@@ -239,7 +248,7 @@ struct Drive::Impl {
     }
 };
 
-Drive::Drive(const vfs::Tree& tree) : impl_(std::make_unique<Impl>(tree)) {}
+Drive::Drive(const vfs::Tree& tree, vfs::FrameCache& cache) : impl_(std::make_unique<Impl>(tree, cache)) {}
 
 Drive::~Drive() {
     unmount();
@@ -286,7 +295,7 @@ bool Drive::mount(const std::wstring& mountPoint, bool debug, std::string* error
     params.UnicodeOnDisk = 1;
     params.PersistentAcls = 1;
     params.ReadOnlyVolume = 1;
-    params.PostCleanupWhenModifiedOnly = 1;
+    params.PostCleanupWhenModifiedOnly = 0;  // Cleanup for every handle: frees the frame it holds
     params.UmFileContextIsUserContext2 = 1;
     wcscpy_s(params.FileSystemName, L"MLVDrive");
 
@@ -298,6 +307,7 @@ bool Drive::mount(const std::wstring& mountPoint, bool debug, std::string* error
         i.Create = Impl::Create;
         i.Open = Impl::Open;
         i.Overwrite = Impl::Overwrite;
+        i.Cleanup = Impl::Cleanup;
         i.Close = Impl::Close;
         i.Read = Impl::Read;
         i.GetFileInfo = Impl::GetFileInfo;
