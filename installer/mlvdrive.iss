@@ -388,7 +388,8 @@ begin
   end;
   if CurUninstallStep = usPostUninstall then
     if not UninstallSilent then
-      if MsgBox('Delete MLV Drive''s settings too (' + ExpandConstant('{userappdata}\MLV Drive') + ')?' + #13#10 +
+      if MsgBox('Delete MLV Drive''s settings too, and any pixel maps of your own kept with them (' +
+                ExpandConstant('{userappdata}\MLV Drive') + ')?' + #13#10 +
                 'Keep them if you will install MLV Drive again. (WinFsp stays installed: other programs may use it.)',
                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
         DelTree(ExpandConstant('{userappdata}\MLV Drive'), True, True, True);

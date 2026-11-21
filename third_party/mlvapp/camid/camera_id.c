@@ -393,57 +393,6 @@ static int camera_id_get_current_cam(uint32_t model_id)
 };
 
 
-int camidCheckIfCameraKnown(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].cameraModel ? 1:0;
-}
-
-const char* camidGetCameraName(uint32_t cameraModel, int camname_type)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].cameraName[camname_type];
-}
-
-int32_t* camidGetColorMatrix1(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].ColorMatrix1;
-}
-
-int32_t* camidGetColorMatrix2(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].ColorMatrix2;
-}
-
-int32_t* camidGetForwardMatrix1(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].ForwardMatrix1;
-}
-
-int32_t* camidGetForwardMatrix2(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].ForwardMatrix2;
-}
-
-int32_t* camidGetHFocalResolution(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].focal_resolution_x;
-}
-
-int32_t* camidGetVFocalResolution(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].focal_resolution_y;
-}
-
-int32_t camidGetFocalUnit(uint32_t cameraModel)
-{
-    return camera_id[camera_id_get_current_cam(cameraModel)].focal_unit;
-}
-
-uint32_t camidGetMaxAnalogIso(uint32_t cameraModel)
-{
-    uint32_t max_analog_iso = camera_id[camera_id_get_current_cam(cameraModel)].max_analog_iso;
-    return max_analog_iso < 3200 ? 3200 : max_analog_iso;
-}
-
 camera_id_t* camidGet(uint32_t cameraModel)
 {
     return &camera_id[camera_id_get_current_cam(cameraModel)];

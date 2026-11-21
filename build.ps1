@@ -7,7 +7,7 @@
 #   build      configures (if needed) and builds (the default action):
 #                build\mlvdrive_tray.exe  the tray app (MLV Drive in the notification area)
 #                build\mlvdrive.exe       the drive on the command line
-#                build\mlvdrive_tool.exe   the core on the command line (clip info, DNGs, timings)
+#                build\mlvdrive_tool.exe  the core on the command line (clip info, DNGs, timings)
 #   install    for the current user, no administrator rights (tools\install.ps1): the programs into
 #              %LOCALAPPDATA%\Programs\MLV Drive, a Start Menu shortcut "MLV Drive" (the tray app);
 #              stops a running copy first. WinFsp must be installed separately (https://winfsp.dev/rel/)
@@ -59,7 +59,8 @@ function New-Stage {
     if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
     New-Item -ItemType Directory -Force $stage | Out-Null
     Copy-Item $programs $stage
-    Copy-Item (Join-Path $BuildDir 'pixelmaps') $stage -Recurse
+    # From the source (build\pixelmaps, CMake's copy, keeps maps removed since)
+    Copy-Item (Join-Path $Root 'third_party\mlvapp\pixelmaps') $stage -Recurse
     Copy-Item (Join-Path $Root 'README.md'), (Join-Path $Root 'LICENSE') $stage
     Copy-Item (Join-Path $Root 'tools\install.ps1'), (Join-Path $Root 'tools\install.cmd'), (Join-Path $Root 'tools\uninstall.cmd') $stage
     $stage

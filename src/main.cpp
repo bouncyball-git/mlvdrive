@@ -8,7 +8,6 @@
 // runs until Ctrl+C, the console is closed or `mlvdrive unmount` is run, then unmounts.
 #include "app/mounter.h"
 #include "app/settings.h"
-#include "parallel.h"
 #include "util/file.h"
 
 #include <windows.h>
@@ -52,9 +51,9 @@ int usage() {
                  "                   MLV folder may then be left out\n"
                  "  --no-test-patterns  without them (whatever the settings say)\n"
                  "  --no-watch       don't watch the folders (new clips show after `mlvdrive rescan`)\n"
-                 "  --cache=MB       finished frames kept in memory (auto: a quarter of the RAM, 512 MB\n"
-                 "                   to 16 GB; the default)\n"
-                 "  --read-ahead=N   frames made ahead of the one read (default: one per CPU; 0: none)\n"
+                 "  --cache=MB       finished frames kept in memory, 16 or more (auto: a quarter of the RAM,\n"
+                 "                   512 MB to 16 GB; the default)\n"
+                 "  --read-ahead=N   frames made ahead of the one read, 0 to 256 (default: one per CPU)\n"
                  "  --debug          log every file system request\n"
                  "  Ctrl+C or `mlvdrive unmount M:` unmounts.\n",
                  util::narrow(app::settingsPath()).c_str());
@@ -116,10 +115,10 @@ int wmain(int argc, wchar_t** argv) {
         if (a == L"--cache=auto") {
             s.cacheMb = 0;
         } else if (a.rfind(L"--cache=", 0) == 0) {
-            if (!number(a, 8, &v) || v < 16) return usage();
+            if (!number(a, 8, &v) || v < 16 || v > (1ul << 20)) return usage();  // as the settings file allows
             s.cacheMb = unsigned(v);
         } else if (a.rfind(L"--read-ahead=", 0) == 0) {
-            if (!number(a, 13, &v)) return usage();
+            if (!number(a, 13, &v) || v > 256) return usage();
             s.readAhead = int(v);
         } else if (a == L"--dng=16") s.format = dng::Output::Uncompressed16;
         else if (a == L"--dng=packed") s.format = dng::Output::Uncompressed;
@@ -190,6 +189,5 @@ int wmain(int argc, wchar_t** argv) {
                 "dropped %llu\n",
                 (unsigned long long)st.misses, (unsigned long long)st.hits, (unsigned long long)st.waits,
                 (unsigned long long)st.readAhead, (unsigned long long)st.readAheadUsed, (unsigned long long)st.dropped);
-    par::shutdown();
     return 0;
 }

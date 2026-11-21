@@ -12,6 +12,8 @@
 //   mlvdrive_tool selftest <clip.MLV>                    every frame: the fast decoder against the
 //                                                        original one, the vector raw corrections
 //                                                        against the scalar ones (value for value);
+//                                                        every 32nd: the fast lossless encoder
+//                                                        against the original (byte for byte);
 //                                                        the audio read in pieces against whole
 //   mlvdrive_tool read  <folder>                         reads every .dng in a folder (a clip's
 //                                                        folder on the drive) in name order:
@@ -28,7 +30,6 @@
 #include "mlv/clip.h"
 #include "mlv/color.h"
 #include "mlv/wav.h"
-#include "parallel.h"
 #include "raw/rawfix.h"
 #include "util/file.h"
 #include "vfs/test_patterns.h"
@@ -577,8 +578,22 @@ int selftest(const Args& a) {
     std::vector<uint8_t> scratch;
     std::string error;
     raw::Fixer fixVector(*clip, a.fixes), fixScalar(*clip, a.fixes);
-    uint32_t decodeDiffer = 0, fixDiffer = 0;
+    uint32_t decodeDiffer = 0, fixDiffer = 0, encodeDiffer = 0, encoded = 0;
     double fastMs = 0, refMs = 0, vecMs = 0, scalarMs = 0;
+    // The lossless encoder as the DNG writer calls it (two rows per JPEG row), fast or original.
+    const int w = clip->width(), h = clip->height(), bpp = clip->bitsPerPixel();
+    auto encode = [&](uint16_t* image, bool fastCode, std::vector<uint8_t>& out) {
+        lj92_fast = fastCode ? 1 : 0;
+        uint8_t* bytes = nullptr;
+        int size = 0;
+        const int ret = lj92_encode(image, w * 2, h / 2, bpp, w * 2 * (h / 2), 0, nullptr, 0, &bytes, &size);
+        lj92_fast = 1;
+        const bool ok = ret == LJ92_ERROR_NONE && bytes;
+        out.assign(bytes, bytes + (ok ? size : 0));
+        std::free(bytes);
+        return ok;
+    };
+    std::vector<uint8_t> encFast, encRef;
     for (uint32_t f = 0; f < clip->frameCount(); ++f) {
         lj92_fast = 1;
         auto t0 = Clock::now();
@@ -606,6 +621,13 @@ int selftest(const Args& a) {
         scalarMs += msSince(t0);
         raw::setSimd(true);
         if (fast != fixedRef && fixDiffer++ == 0) std::printf("frame %u: the raw corrections differ\n", f);
+
+        // Every 32nd frame (the original encoder is slow): the same bytes from both.
+        if (f % 32 == 0) {
+            ++encoded;
+            const bool same = encode(fast.data(), true, encFast) && encode(fast.data(), false, encRef) && encFast == encRef;
+            if (!same && encodeDiffer++ == 0) std::printf("frame %u: the lossless encoders differ\n", f);
+        }
     }
     // The audio: read whole (the reference) and in odd-sized pieces, from the blocks they come from.
     uint32_t audioDiffer = 0;
@@ -636,8 +658,10 @@ int selftest(const Args& a) {
                 refMs / n);
     std::printf("corrections: %u frames differ; vector %.2f ms a frame, scalar %.2f\n", fixDiffer, vecMs / n,
                 scalarMs / n);
+    std::printf("encoder:     %u of %u frames differ (fast and original lossless encoder, byte for byte)\n",
+                encodeDiffer, encoded);
     std::printf("audio:       %s (%zu bytes)\n", audioDiffer ? "DIFFERS" : "the same in pieces as whole", whole.size());
-    return decodeDiffer || fixDiffer || audioDiffer ? 1 : 0;
+    return decodeDiffer || fixDiffer || encodeDiffer || audioDiffer ? 1 : 0;
 }
 
 // --- read ---
@@ -760,7 +784,6 @@ int run(int argc, char** argv) {
     else if (cmd == "wav") rc = writeWavFile(a);
     else if (cmd == "patterns") rc = writePatterns(a);
     else return usage();
-    par::shutdown();
     return rc;
 }
 

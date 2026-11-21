@@ -199,29 +199,6 @@ static inline void interpolate_pixel(uint16_t * image_data, int x, int y, int w,
     image_data[x + y*w] = -median_int_wirth(neighbours, k);
 }
 
-static inline void _interpolate_horizontal(uint16_t * image_data, int i, int * raw2ev, int * ev2raw)
-{
-    int gh1 = image_data[i + 3];
-    int gh2 = image_data[i + 1];
-    int gh3 = image_data[i - 1];
-    int gh4 = image_data[i - 3];
-    int dh1 = ABS(raw2ev[gh1] - raw2ev[gh2]);
-    int dh2 = ABS(raw2ev[gh3] - raw2ev[gh4]);
-    int sum = dh1 + dh2;
-    if (sum == 0)
-    {
-        image_data[i] = image_data[i + 2];
-    }
-    else
-    {
-        int ch1 = ((sum - dh1) << 8) / sum;
-        int ch2 = ((sum - dh2) << 8) / sum;
-        
-        int ev_corr = ((raw2ev[image_data[i + 2]] * ch1) >> 8) + ((raw2ev[image_data[i - 2]] * ch2) >> 8);
-        image_data[i] = ev2raw[COERCE(ev_corr, 0, 14*EV_RESOLUTION-1)];
-    }
-}
-
 static inline void interpolate_horizontal(uint16_t * image_data, int i, int * raw2ev, int * ev2raw)
 {
     int gh1 = image_data[i + 3];
@@ -1492,32 +1469,6 @@ mem_err:
         }
         default:
             break;
-    }
-}
-
-void reset_fpm_status(pixel_map * focus_pixel_map, int * fpm_status)
-{
-    if( !focus_pixel_map ) return;
-    *fpm_status = 0;
-    focus_pixel_map->count = 0;
-    focus_pixel_map->capacity = 0;
-    if(focus_pixel_map->pixels)
-    {
-        free(focus_pixel_map->pixels);
-        focus_pixel_map->pixels = NULL;
-    }
-}
-
-void reset_bpm_status(pixel_map * bad_pixel_map, int * bpm_status)
-{
-    if( !bad_pixel_map ) return;
-    *bpm_status = 0;
-    bad_pixel_map->count = 0;
-    bad_pixel_map->capacity = 0;
-    if(bad_pixel_map->pixels)
-    {
-        free(bad_pixel_map->pixels);
-        bad_pixel_map->pixels = NULL;
     }
 }
 

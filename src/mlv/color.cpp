@@ -37,7 +37,7 @@ void TemperatureToRgb(double t, double rgb[3]) {
 }
 
 void CameraXyz(uint32_t model, double camXyz[3][3]) {
-    const int32_t* m = camidGetColorMatrix2(model);
+    const int32_t* m = camidGet(model)->ColorMatrix2;
     for (int i = 0; i < 9; i++) camXyz[i / 3][i % 3] = m[i * 2 + 1] ? double(m[i * 2]) / m[i * 2 + 1] : 0.0;
 }
 

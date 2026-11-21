@@ -19,7 +19,8 @@
 //   read_ahead = auto          ; frames made ahead of the one read: auto (one per CPU) or a number
 //
 // The console program takes them as defaults (its options override them); the tray app reads and
-// writes them.
+// writes them. Comments: a line starting with ; or #, or from " ;" to the end of a line (a folder
+// whose name has " ;" in it can't be given here).
 #pragma once
 
 #include "dng/dng_writer.h"

@@ -84,7 +84,8 @@ typedef struct _ljp {
 static int find(ljp* self) {
     int ix = self->ix;
     u8* data = self->data;
-    while (data[ix] != 0xFF && ix<(self->datalen-1)) {
+    /* MLV Drive: the bound first (ix may be past the data after a segment's length) */
+    while (ix<(self->datalen-1) && data[ix] != 0xFF) {
         ix += 1;
     }
     ix += 2;
@@ -97,11 +98,23 @@ static int find(ljp* self) {
 
 static int parseHuff(ljp* self) {
     int ret = LJ92_ERROR_CORRUPT;
+    if (self->ix + 19 > self->datalen) return ret; /* MLV Drive: the header below must be there */
     u8* huffhead = &self->data[self->ix]; // xstruct.unpack('>HB16B',self.data[self.ix:self.ix+19])
     u8* bits = &huffhead[2];
     bits[0] = 0; // Because table starts from 1
     int hufflen = BEH(huffhead[0]);
     if ((self->ix + hufflen) >= self->datalen) return ret;
+    /* MLV Drive: the 16 counts and as many values as they add up to must be in the segment (else
+       the table was read from past it, past the buffer too) */
+    if (hufflen < 19) return ret;
+    {
+        int count = 0;
+        for (int k = 1; k <= 16; k++) count += bits[k];
+        if (count > hufflen - 19) return ret;
+        /* and every value a size category, 0 to 16 (more made the decoders shift by up to 255) */
+        for (int k = 0; k < count; k++)
+            if (self->data[self->ix + 19 + k] > 16) return ret;
+    }
 #ifdef SLOW_HUFF
     u8* huffval = calloc(hufflen - 19,sizeof(u8));
     if (huffval == NULL) return LJ92_ERROR_NO_MEMORY;
@@ -234,8 +247,10 @@ static int parseHuff(ljp* self) {
     }
     self->huffbits = maxbits;
     /* Now fill the lut */
-    u16* hufflut = malloc((1<<maxbits) * sizeof(u16));
+    /* MLV Drive: zeroed (an incomplete code leaves entries unfilled: they read as 0, not garbage) */
+    u16* hufflut = calloc((size_t)1 << maxbits, sizeof(u16));
     if (hufflut == NULL) return LJ92_ERROR_NO_MEMORY;
+    free(self->hufflut); /* MLV Drive: a second table replaces the first (it leaked) */
     self->hufflut = hufflut;
     int i = 0;
     int hv = 0;
@@ -276,16 +291,19 @@ static int parseHuff(ljp* self) {
 }
 
 static int parseSof3(ljp* self) {
-    if (self->ix+6 >= self->datalen) return LJ92_ERROR_CORRUPT;
+    if (self->ix+7 >= self->datalen) return LJ92_ERROR_CORRUPT; /* MLV Drive: was ix+6, ix+7 is read */
     self->y = BEH(self->data[self->ix+3]);
     self->x = BEH(self->data[self->ix+5]);
     self->bits = self->data[self->ix+2];
     self->components = self->data[self->ix + 7];
+    /* MLV Drive: the decoders start from 1 << (bits - 1) */
+    if (self->bits < 2 || self->bits > 16) return LJ92_ERROR_CORRUPT;
     self->ix += BEH(self->data[self->ix]);
     return LJ92_ERROR_NONE;
 }
 
 static int parseBlock(ljp* self) {
+    if (self->ix + 1 >= self->datalen) return LJ92_ERROR_CORRUPT; /* MLV Drive: its length is 2 bytes */
     self->ix += BEH(self->data[self->ix]);
     if (self->ix >= self->datalen) return LJ92_ERROR_CORRUPT;
     return LJ92_ERROR_NONE;
@@ -347,6 +365,15 @@ static int extend(ljp* self,int v,int t) {
 }
 #endif
 
+/* MLV Drive: the two bytes at ix (first in the low byte), zeros past the data's end. Was an
+   unchecked (and unaligned) u16 load: on a damaged stream the reads ran past the buffer, the
+   generic decoder having no other check on its position. */
+static inline int lj92_next16(ljp* self, int ix) {
+    const int one = ix < self->datalen ? self->data[ix] : 0;
+    const int two = ix + 1 < self->datalen ? self->data[ix + 1] : 0;
+    return one | two << 8;
+}
+
 inline static int nextdiff(ljp* self) {
 #ifdef SLOW_HUFF
     int t = decode(self);
@@ -359,7 +386,7 @@ inline static int nextdiff(ljp* self) {
     int ix = self->ix;
     int next;
     while (cnt < huffbits) {
-        next = *(u16*)&self->data[ix];
+        next = lj92_next16(self, ix);
         int one = next&0xFF;
         int two = next>>8;
         b = (b<<16)|(one<<8)|two;
@@ -384,7 +411,7 @@ inline static int nextdiff(ljp* self) {
         diff = 1 << 15;
     } else {
         while (cnt < t) {
-            next = *(u16*)&self->data[ix];
+            next = lj92_next16(self, ix);
             int one = next&0xFF;
             int two = next>>8;
             b = (b<<16)|(one<<8)|two;
@@ -697,7 +724,10 @@ static int parseScan(ljp* self) {
     int ret = LJ92_ERROR_CORRUPT;
     //memset(self->sssshist,0,sizeof(self->sssshist));
     self->ix = self->scanstart;
+    /* MLV Drive: the scan header must be in the data (was read unchecked) */
+    if (self->ix + 3 >= self->datalen) return ret;
     int compcount = self->data[self->ix+2];
+    if (self->ix + 3 + 2*compcount >= self->datalen) return ret;
     int pred = self->data[self->ix+3+2*compcount];
     if (pred<0 || pred>7) return ret;
 #ifndef SLOW_HUFF
@@ -855,6 +885,12 @@ int lj92_open(lj92* lj,
     self->datalen = datalen;
 
     int ret = findSoI(self);
+    /* MLV Drive: a stream needs its Huffman table and frame header (without the table the
+       decoders read from a null pointer: found by fuzzing) */
+#ifndef SLOW_HUFF
+    if (ret == LJ92_ERROR_NONE && !self->hufflut) ret = LJ92_ERROR_CORRUPT;
+#endif
+    if (ret == LJ92_ERROR_NONE && (self->x <= 0 || self->y <= 0 || self->components <= 0)) ret = LJ92_ERROR_CORRUPT;
 
     if (ret == LJ92_ERROR_NONE) {
         u16* rowcache = (u16*)calloc(self->x * self->components * 2, sizeof(u16));
@@ -933,6 +969,7 @@ int frequencyScan(lje* self) {
     int pixcount = self->width*self->height;
     int scan = self->readLength;
     uint16_t* rowcache = (uint16_t*)calloc(1,self->width*4);
+    if (!rowcache) return LJ92_ERROR_NO_MEMORY; /* MLV Drive: was used unchecked */
     uint16_t* rows[2];
     rows[0] = rowcache;
     rows[1] = &rowcache[self->width];
@@ -1230,6 +1267,7 @@ int writeBody(lje* self) {
     int pixcount = self->width*self->height;
     int scan = self->readLength;
     uint16_t* rowcache = (uint16_t*)calloc(1,self->width*4);
+    if (!rowcache) return LJ92_ERROR_NO_MEMORY; /* MLV Drive: was used unchecked */
     uint16_t* rows[2];
     rows[0] = rowcache;
     rows[1] = &rowcache[self->width];
@@ -1496,7 +1534,10 @@ int lj92_encode(uint16_t* image, int width, int height, int bitdepth,
             return ret;
         }
         writePost(self);
-        self->encoded = realloc(self->encoded,self->encodedWritten);
+        { /* MLV Drive: a failed shrink keeps the buffer (it was lost) */
+            uint8_t* shrunk = realloc(self->encoded,self->encodedWritten);
+            if (shrunk) self->encoded = shrunk;
+        }
         *encoded = self->encoded;
         *encodedLength = self->encodedWritten;
         free(self);
@@ -1525,7 +1566,10 @@ int lj92_encode(uint16_t* image, int width, int height, int bitdepth,
 #ifdef DEBUG
     printf("written:%d\n",self->encodedWritten);
 #endif
-    self->encoded = realloc(self->encoded,self->encodedWritten);
+    { /* MLV Drive: a failed shrink keeps the buffer (it was lost) */
+        uint8_t* shrunk = realloc(self->encoded,self->encodedWritten);
+        if (shrunk) self->encoded = shrunk;
+    }
     self->encodedLength = self->encodedWritten;
     *encoded = self->encoded;
     *encodedLength = self->encodedLength;

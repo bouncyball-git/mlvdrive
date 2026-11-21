@@ -5,12 +5,11 @@
  *
  * Source: http://ndevilla.free.fr/median/median/
  * Modified to have both int and unsigned short versions.
+ * MLV Drive: the short and unsigned short versions left out (not used).
  */
 
 
 #define ELEM_SWAP_INT(a,b) { register int t=(a);(a)=(b);(b)=t; }
-#define ELEM_SWAP_SHORT(a,b) { register short t=(a);(a)=(b);(b)=t; }
-#define ELEM_SWAP_USHORT(a,b) { register unsigned short t=(a);(a)=(b);(b)=t; }
 
 #ifndef err_printf
 #define err_printf printf
@@ -67,67 +66,4 @@ static inline int kth_smallest_int(int a[], int n, int k)
     return a[k] ;
 }
 
-static inline int kth_smallest_short(short a[], int n, int k)
-{
-    if (n <= 0 || k < 0)
-    {
-        /* safeguard for invalid calls */
-        err_printf("error: kth_smallest_short(n=%d, k=%d)\n", n, k);
-        return 0;
-    }
-    
-    register short i,j,l,m ;
-    register short x ;
-    
-    l=0 ; m=n-1 ;
-    while (l<m) {
-        x=a[k] ;
-        i=l ;
-        j=m ;
-        do {
-            while (a[i]<x) i++ ;
-            while (x<a[j]) j-- ;
-            if (i<=j) {
-                ELEM_SWAP_SHORT(a[i],a[j]) ;
-                i++ ; j-- ;
-            }
-        } while (i<=j) ;
-        if (j<k) l=i ;
-        if (k<i) m=j ;
-    }
-    return a[k] ;
-}
-
-static inline unsigned short kth_smallest_ushort(unsigned short a[], int n, int k)
-{
-    if (n <= 0 || k < 0)
-    {
-        /* safeguard for invalid calls */
-        err_printf("error: kth_smallest_int(n=%d, k=%d)\n", n, k);
-        return 0;
-    }
-    register int i,j,l,m ;
-    register unsigned short x ;
-    
-    l=0 ; m=n-1 ;
-    while (l<m) {
-        x=a[k] ;
-        i=l ;
-        j=m ;
-        do {
-            while (a[i]<x) i++ ;
-            while (x<a[j]) j-- ;
-            if (i<=j) {
-                ELEM_SWAP_USHORT(a[i],a[j]) ;
-                i++ ; j-- ;
-            }
-        } while (i<=j) ;
-        if (j<k) l=i ;
-        if (k<i) m=j ;
-    }
-    return a[k] ;
-}
-
 #define median_int_wirth(a,n) kth_smallest_int(a,n,(((n)&1)?((n)/2):(((n)/2)-1)))
-#define median_short_wirth(a,n) kth_smallest_short(a,n,(((n)&1)?((n)/2):(((n)/2)-1)))
-#define median_ushort_wirth(a,n) kth_smallest_ushort(a,n,(((n)&1)?((n)/2):(((n)/2)-1)))

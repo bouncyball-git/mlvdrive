@@ -37,7 +37,8 @@ Run `MLVDrive-<version>-setup.exe`:
   offers to download the latest version from winfsp.dev and install it; the downloaded installer
   is run only if it carries a valid signature of WinFsp's publisher (NAVIMATICS LLC). Without it,
   MLV Drive installs anyway and the tray app points to WinFsp.
-- Uninstalling (Settings > Apps) asks whether to delete the settings too; WinFsp stays.
+- Uninstalling (Settings > Apps) asks whether to delete the settings too (and pixel maps of your
+  own kept with them); WinFsp stays.
 
 Silent installs: `/VERYSILENT /CURRENTUSER /COMPONENTS=gui,cli,tool /TASKS=addpath` (Inno Setup's
 usual switches).
@@ -87,7 +88,8 @@ Pixel maps (`.fpm` focus, `.bpm` bad pixels, MLV-App's format and names:
 `<camera id>_<raw width>x<raw height>`) are looked up beside the clip, first as `<clip name>.fpm`
 / `.bpm` (a map for that clip alone; a clip-named `.fpm` turns the focus fix on in auto), then
 under the generic name; then in `%APPDATA%\MLV Drive\pixelmaps`; then in `pixelmaps` beside the
-programs (MLV-App's maps for EOS M and 700D modes). Bad pixels are searched on the first frame.
+programs (MLV-App's 273 maps: EOS M, EOS M2, 100D, 650D and 700D in their video and crop modes).
+Bad pixels are searched on the first frame (or read from a `.bpm` map).
 
 The cache keeps the frames read most recently, except that a clip read straight through keeps
 its start: a clip longer than the cache, played again, finds that part made.
@@ -122,7 +124,7 @@ editors can sync the audio by timecode. Without a drive letter the next free one
 used. Ctrl+C (or `mlvdrive unmount`) unmounts. WinFsp must be installed where it runs.
 
 Frames read in order are made ahead on every CPU (`--read-ahead`, default one per CPU, 0 off) and
-kept in a cache (`--cache`, default 512 MB).
+kept in a cache (`--cache`, default auto: a quarter of the RAM, 512 MB to 16 GB).
 
 `mlvdrive_tool` runs the core without the drive:
 
@@ -137,6 +139,8 @@ mlvdrive_tool patterns <folder>                    one DNG of each test pattern 
     --timecode=time|count (dng, wav)   timecode: time of day (default) or from 00:00:00:00
 mlvdrive_tool selftest <clip.MLV>                  every frame: fast decoder and vector corrections
                                                    against the original code, value for value;
+                                                   every 32nd frame: the fast lossless encoder
+                                                   against the original, byte for byte;
                                                    the audio read in pieces against read whole
 mlvdrive_tool read  <folder>                       reads a mounted clip's DNGs in order: frames/s
     --threads=N  readers (default 1)   --passes=N (default 2)   --buffered  through Windows' cache
@@ -153,7 +157,7 @@ decodes; per kind of clip (camera, size, bit depth, compression; and a spanned o
 through the fast decoder equals the original and the vector raw fixes the scalar ones; one frame in
 each DNG format read back; the test charts; a mount (on a spare letter, every option given, so the
 settings file doesn't matter) where each clip's middle frame equals a fresh decode, a WAV and a
-chart equal the CLI's; the cache keeping a long clip's start; read speed above real time; and a
+chart equal `mlvdrive_tool`'s; the cache keeping a long clip's start; read speed above real time; and a
 watched scratch folder where clips copied in, replaced and deleted show as they should while an
 open file keeps reading. Prints PASS / FAIL per check; exit code 0 when all pass.
 

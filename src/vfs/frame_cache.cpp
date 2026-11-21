@@ -1,6 +1,7 @@
 #include "vfs/frame_cache.h"
 
 #include <algorithm>
+#include <new>
 
 namespace vfs {
 
@@ -19,10 +20,17 @@ FrameCache::~FrameCache() {
     for (auto& t : workers_) t.join();
 }
 
+// Out of memory is a failure like any other: thrown on a read-ahead worker it would end the
+// program, and on a reader's thread it would leave the entry "being made" for good.
 FrameData FrameCache::make(const ClipEntry& clip, uint32_t frame, std::string* error) {
-    auto data = std::make_shared<std::vector<uint8_t>>();
-    if (!clip.source->renderFrame(frame, *data, error)) return nullptr;
-    return data;
+    try {
+        auto data = std::make_shared<std::vector<uint8_t>>();
+        if (!clip.source->renderFrame(frame, *data, error)) return nullptr;
+        return data;
+    } catch (const std::bad_alloc&) {
+        *error = "out of memory";
+        return nullptr;
+    }
 }
 
 FrameData FrameCache::get(const std::shared_ptr<const ClipEntry>& clipPtr, uint32_t frame, bool readAhead,

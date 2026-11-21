@@ -96,9 +96,13 @@ Settings loadSettings(const std::wstring& path, std::vector<std::string>* warnin
         std::string line = text.substr(at, end - at);
         at = end + 1;
         ++lineNo;
-        // A comment starts with ; or # at the start of a line or after a space (paths keep theirs).
-        for (size_t i = 0; i < line.size(); ++i) {
-            if ((line[i] == ';' || line[i] == '#') && (i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t')) {
+        // A comment: a line starting with ; or #, or the rest of one from a ; after a space or tab
+        // (as this file writes them). A # later in a line is kept: folder names have them
+        // ("Shoot #2"), as they may have a ; not after a space.
+        line = Trim(line);
+        if (!line.empty() && (line[0] == ';' || line[0] == '#')) line.clear();
+        for (size_t i = 1; i < line.size(); ++i) {
+            if (line[i] == ';' && (line[i - 1] == ' ' || line[i - 1] == '\t')) {
                 line.erase(i);
                 break;
             }

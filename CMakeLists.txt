@@ -31,14 +31,12 @@ else()
     target_link_libraries(mlvapp_c PRIVATE m)
 endif()
 
-# --- MLV reading and decoding, raw corrections, white balance and camera matrices, thread pool,
-#     DNG writer ---
+# --- MLV reading and decoding, raw corrections, white balance, the DNG and WAV writers ---
 add_library(mlv_core STATIC
     src/util/file.cpp
     src/mlv/clip.cpp
     src/mlv/color.cpp
     src/raw/rawfix.cpp
-    src/parallel.cpp
     src/dng/dng_writer.cpp
     src/mlv/wav.cpp)
 target_include_directories(mlv_core PUBLIC src)

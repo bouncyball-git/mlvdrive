@@ -7,7 +7,6 @@
 #include "app/mounter.h"
 #include "app/settings.h"
 #include "fs/winfsp_fs.h"
-#include "parallel.h"
 #include "util/file.h"
 
 #include <windows.h>
@@ -554,7 +553,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
     if (g_worker.joinable()) g_worker.join();
     g_mounter.unmount();
-    par::shutdown();
     CoUninitialize();
     if (single) CloseHandle(single);
     return 0;

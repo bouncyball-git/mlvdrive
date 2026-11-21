@@ -49,19 +49,9 @@ typedef struct {
 
 
 /* functions to access 'camera_id_t' members */
-const char* camidGetCameraName(uint32_t cameraModel, int camname_type);
-int32_t* camidGetColorMatrix1(uint32_t cameraModel);
-int32_t* camidGetColorMatrix2(uint32_t cameraModel);
-int32_t* camidGetForwardMatrix1(uint32_t cameraModel);
-int32_t* camidGetForwardMatrix2(uint32_t cameraModel);
-int32_t* camidGetHFocalResolution(uint32_t cameraModel);
-int32_t* camidGetVFocalResolution(uint32_t cameraModel);
-int32_t camidGetFocalUnit(uint32_t cameraModel);
-uint32_t camidGetMaxAnalogIso(uint32_t cameraModel);
-
-/* Check if a camera is known my camera_id */
-int camidCheckIfCameraKnown(uint32_t cameraModel);
-
+/* MLV Drive: the camera's entry (for an unknown camera the last one: model 0, the 5D Mark III's
+   matrices and focal data, cameraName[UNIQ] "Unknown Camera"); the other
+   accessors left out (not used) */
 camera_id_t* camidGet(uint32_t cameraModel);
 
 #ifdef __cplusplus

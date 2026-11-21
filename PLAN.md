@@ -46,7 +46,7 @@ From `D:\devel\MLV-OFX` (tested; decodes the test clip correctly):
 | `src/mlv/color.{h,cpp}` | `src/mlv/` | camera matrices (ColorMatrix2), as-shot white balance, Kelvin/tint |
 | `src/raw/rawfix.{h,cpp}` | `src/raw/` | raw corrections: vertical stripes, focus pixels, bad pixels (chroma smoothing came too; removed in the 0.7 review, never used) |
 | `src/util/file.{h,cpp}` | `src/util/` | UTF-8 paths, positioned reads from several threads |
-| `src/parallel.{h,cpp}` | `src/` | thread pool (`par::forRange`) |
+| `src/parallel.{h,cpp}` | `src/` | thread pool (`par::forRange`; removed in the 0.7 review: never called) |
 | `third_party/mlvapp/` (whole) | `third_party/mlvapp/` | MLV-App C code: fast LJ92 decoder **and encoder**, camera table, pixel fixes; its README and LICENSE |
 | `build.ps1`, `CMakeLists.txt` | adapt | build script pattern (vcvars via vswhere, Ninja, stale-cache reset, elevated install) |
 
@@ -76,8 +76,8 @@ mlvdrive_tray.exe (tray app) / mlvdrive.exe (console), on app/settings + app/mou
  ├─ vfs/tree         the virtual tree: MLV folder → clip folders → DNG/WAV entries,
  │                   sizes and timestamps known without generating anything
  ├─ dng/writer       DNG header (fixed size per clip) + image data
- ├─ cache/frames     generated frames: LRU by bytes (e.g. 1 GB), read-ahead on the pool
- ├─ mlv/, raw/, util/, parallel   (copied, see above)
+ ├─ cache/frames     generated frames: LRU by bytes (e.g. 1 GB), read-ahead on its own threads
+ ├─ mlv/, raw/, util/   (copied, see above)
  └─ tools/mlvdrive_tool  mlvdrive_tool: write one DNG to disk, bench a clip, dump the tree
 ```
 
@@ -341,6 +341,33 @@ in Resolve.
      metadata, the DNG writer's unused options, the colour matrix code, three copies of the
      UTF-8 conversions (one in util now). Audio other than 16-bit is no longer shown as a WAV
      that would be wrong. test.ps1: 20 of 20.
+   - Second review pass. Fixed: the generic LJ92 decoder's bit reader loaded past the data
+     unchecked (damaged frames with a predictor other than the fast decoder's; now zeros past the
+     end, as the fast one), its Huffman table could be read past its segment, a second table
+     leaked the first, unfilled table entries were garbage (now 0); install.ps1 asked any running
+     tray app to quit (also the setup-installed one) and removed "Start with Windows" whatever it
+     pointed to; build.ps1 staged build\pixelmaps (CMake's copy keeps maps removed since: now
+     from third_party); `mlvdrive --read-ahead` / `--cache` unbounded (now as the settings file).
+     Removed as unused: the thread pool (src/parallel: only its shutdown was called), the camera
+     table's accessors but camidGet, a test.ps1 variable. Docs: README (the bundled maps, the
+     cache's default, uninstall deletes own maps with the settings), the setup's question, the
+     tool variable in test.ps1. test.ps1: 20 of 20.
+   - Third pass. Fixed: out of memory while making a frame ended the program on a read-ahead
+     worker, or left the frame "being made" for good (readers waiting forever): now a read
+     error; the settings file took " #" in a line for a comment, so a folder "Shoot #2" read back
+     as "Shoot" (now only a line starting with ; or #, or " ;" on; round-tripped in a scratch
+     test); the original LJ92 encoder's row buffers unchecked, a failed shrink of its output lost
+     the buffer. The original encoder was only reachable for comparing, and nothing compared:
+     selftest now checks the fast one against it on every 32nd frame, byte for byte (61 frames
+     of the test set, all equal). test.ps1: 20 of 20.
+   - Fourth pass: a scan for unused names (none left in our code); in third_party, unused
+     helpers removed (pixelproc's `_interpolate_horizontal` and `reset_*_status`, wirth.h's
+     short versions). LJ92's header parsing checked byte by byte (marker search, SOF3, segment
+     lengths, scan header, Huffman values) and fuzzed: an AddressSanitizer harness (scratch, not
+     in the project) decoding 3000 damaged frames both ways. The code as of 5b7c409 overflowed on
+     the first; the harness then found a null-pointer crash for a stream without a Huffman
+     table (now refused); the final code has no memory errors. Every LJ92 change:
+     `third_party/mlvapp/liblj92/lj92_changes.md`. test.ps1: 20 of 20.
 8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).
 
 **Resolve, later** (when the user wants to run it): import `M:\<clip>` as one clip with the

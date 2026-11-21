@@ -4,8 +4,8 @@
 #   install.ps1               the programs and pixel maps into %LOCALAPPDATA%\Programs\MLV Drive, a
 #                             Start Menu shortcut "MLV Drive" (the tray app); a running copy is asked
 #                             to quit first
-#   install.ps1 -Uninstall    removes them, the shortcut and "Start with Windows"; keeps the
-#                             settings (%APPDATA%\MLV Drive)
+#   install.ps1 -Uninstall    removes them, the shortcut and "Start with Windows" (if it starts this
+#                             copy); keeps the settings (%APPDATA%\MLV Drive)
 #   install.ps1 -Start        starts MLV Drive once installed
 #
 # install.cmd / uninstall.cmd run it with PowerShell's script policy set aside for this one run.
@@ -26,12 +26,18 @@ function Stop-Installed {
     $running = @(Get-Process mlvdrive_tray, mlvdrive -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) })
     if (-not $running) { return }
-    Add-Type -Namespace MlvDriveSetup -Name Win -MemberDefinition @'
+    Add-Type -Namespace MlvDriveInstall -Name Win -MemberDefinition @'
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string title);
 [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr wnd, uint msg, IntPtr w, IntPtr l);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr wnd, out uint pid);
 '@
-    $tray = [MlvDriveSetup.Win]::FindWindowW('MLVDriveTray', [NullString]::Value)
-    if ($tray -ne [IntPtr]::Zero) { [MlvDriveSetup.Win]::PostMessageW($tray, 0x0111, [IntPtr]116, [IntPtr]::Zero) | Out-Null }  # WM_COMMAND Quit
+    # The tray app runs once per user: its window, if that is this installation's.
+    $tray = [MlvDriveInstall.Win]::FindWindowW('MLVDriveTray', [NullString]::Value)
+    $trayPid = [uint32]0
+    if ($tray -ne [IntPtr]::Zero) { [MlvDriveInstall.Win]::GetWindowThreadProcessId($tray, [ref] $trayPid) | Out-Null }
+    if ($trayPid -and ($running.Id -contains [int]$trayPid)) {
+        [MlvDriveInstall.Win]::PostMessageW($tray, 0x0111, [IntPtr]116, [IntPtr]::Zero) | Out-Null  # WM_COMMAND Quit
+    }
     foreach ($p in $running) {
         Step "stop $($p.Name) (pid $($p.Id))"
         if (-not $p.WaitForExit(5000)) { Stop-Process -Id $p.Id -Force; $p.WaitForExit(5000) | Out-Null }
@@ -42,7 +48,9 @@ if ($Uninstall) {
     Stop-Installed
     if (Test-Path $InstallDir) { Step "remove $InstallDir"; Remove-Item -Recurse -Force $InstallDir }
     if (Test-Path $Shortcut) { Step "remove $Shortcut"; Remove-Item -Force $Shortcut }
-    if (Get-ItemProperty $RunKey -Name 'MLV Drive' -ErrorAction SilentlyContinue) {
+    # "Start with Windows" only if it starts this installation (not one the setup installed).
+    $run = (Get-ItemProperty $RunKey -Name 'MLV Drive' -ErrorAction SilentlyContinue).'MLV Drive'
+    if ($run -and $run.Trim('"').StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase)) {
         Step 'remove "Start with Windows"'
         Remove-ItemProperty $RunKey -Name 'MLV Drive'
     }

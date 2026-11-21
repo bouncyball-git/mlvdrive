@@ -6,7 +6,8 @@
 # bit depth, compression) and the shortest spanned one (.MLV + .M00 ...). Tests:
 #
 #   clips      every clip opens and decodes (mlvdrive_tool info)
-#   selftest   per kind: every frame, fast decoder = original, vector fixes = scalar, audio by range
+#   selftest   per kind: every frame, fast decoder = original, vector fixes = scalar; every 32nd,
+#              fast lossless encoder = original; audio by range
 #   formats    one frame as 16-bit, packed, LJ92 and pass-through DNG, each read back and compared
 #   patterns   the 12 test charts are written
 #   drive      a mount (on -Drive) of the folders + test patterns: every clip's middle frame equals a
@@ -26,9 +27,9 @@ param(
     [switch] $Keep  # keep the scratch folder (to look at what failed)
 )
 $ErrorActionPreference = 'Stop'
-$cli = Join-Path $Bin 'mlvdrive_tool.exe'
+$tool = Join-Path $Bin 'mlvdrive_tool.exe'
 $mount = Join-Path $Bin 'mlvdrive.exe'
-foreach ($p in $cli, $mount) { if (-not (Test-Path $p)) { throw "$p is missing: build first" } }
+foreach ($p in $tool, $mount) { if (-not (Test-Path $p)) { throw "$p is missing: build first" } }
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ("mlvdrive-test-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $scratch | Out-Null
 $results = New-Object System.Collections.ArrayList
@@ -93,7 +94,7 @@ try {
         # (Get-ChildItem -Recurse with a path that isn't there searches the whole drive for its name.)
         if (-not (Test-Path -LiteralPath $folder -PathType Container)) { throw "not a folder: $folder" }
         foreach ($f in Get-ChildItem -LiteralPath $folder -Recurse -Filter *.MLV -File | Sort-Object FullName) {
-            $text = (& $cli info $f.FullName 2>&1) -join "`n"
+            $text = (& $tool info $f.FullName 2>&1) -join "`n"
             $get = { param($re) if ($text -match $re) { $Matches[1] } else { '' } }
             $clips += [pscustomobject]@{
                 Path = $f.FullName; Folder = $folder
@@ -116,7 +117,7 @@ try {
     # --- selftest per kind ---
     Section 'selftest'
     foreach ($c in $picked) {
-        $out = & $cli selftest $c.Path 2>&1
+        $out = & $tool selftest $c.Path 2>&1
         $ok = $LASTEXITCODE -eq 0
         $what = ($out | Where-Object { $_ -match 'differ|audio:' } | ForEach-Object { ($_ -split ';')[0].Trim() }) -join ' / '
         Result 'selftest' $ok ("{0} ({1} frames{2}): {3}" -f $c.Rel, $c.Frames, $(if ($c.Chunks -gt 1) { ", $($c.Chunks) chunks" } else { '' }), $what)
@@ -128,9 +129,9 @@ try {
     $mid = [int]($one.Frames / 2)
     foreach ($fmt in '16', 'packed', 'lj92', 'pass') {
         $dng = Join-Path $scratch "format-$fmt.dng"
-        & $cli dng $one.Path $mid $dng "--dng=$fmt" | Out-Null
+        & $tool dng $one.Path $mid $dng "--dng=$fmt" | Out-Null
         $extra = @(); if ($fmt -eq 'pass') { $extra = @('--no-fix') }
-        $r = Last (& $cli check $one.Path $mid $dng @extra 2>&1)
+        $r = Last (& $tool check $one.Path $mid $dng @extra 2>&1)
         Result 'formats' ($r -like 'same as*') ("{0}: {1}" -f $fmt, $r)
     }
 
@@ -138,7 +139,7 @@ try {
     Section 'patterns'
     $pat = Join-Path $scratch 'patterns'
     New-Item -ItemType Directory -Force $pat | Out-Null
-    & $cli patterns $pat | Out-Null
+    & $tool patterns $pat | Out-Null
     $n = @(Get-ChildItem $pat -Filter *.dng | Where-Object { $_.Length -eq 800 + 1920 * 1080 * 2 }).Count
     Result 'patterns' ($n -eq 12) "$n of 12 charts written, 1920x1080 16-bit"
 
@@ -148,8 +149,6 @@ try {
         '--timecode=time', '--test-patterns', '--no-watch', '--cache=512')
     $m = Start-Mount $args_
     try {
-        $roots = @{}
-        foreach ($folder in $Folders) { $roots[$folder] = $true }
         $wrong = @(); $checked = 0
         foreach ($c in $clips) {
             $relDir = Split-Path $c.Rel -Parent
@@ -157,7 +156,7 @@ try {
             $dir = if ($relDir) { Join-Path "$Drive\" (Join-Path $relDir $name) } else { Join-Path "$Drive\" $name }
             if (-not (Test-Path -LiteralPath $dir)) { $wrong += "$($c.Rel): no folder $dir"; continue }
             $f = [int]($c.Frames / 2)
-            $r = Last (& $cli check $c.Path $f (Join-Path $dir ('{0}_{1:D6}.dng' -f $name, $f)) 2>&1)
+            $r = Last (& $tool check $c.Path $f (Join-Path $dir ('{0}_{1:D6}.dng' -f $name, $f)) 2>&1)
             if ($r -like 'same as*') { $checked++ } else { $wrong += "$($c.Rel) frame ${f}: $r" }
         }
         Result 'drive' ($wrong.Count -eq 0) ("{0} of {1} clips: the middle frame equals a fresh decode{2}" -f $checked, $clips.Count, $(if ($wrong) { '; ' + ($wrong -join '; ') } else { '' }))
@@ -168,13 +167,13 @@ try {
             $relDir = Split-Path $withAudio.Rel -Parent
             $dir = if ($relDir) { Join-Path "$Drive\" (Join-Path $relDir $name) } else { Join-Path "$Drive\" $name }
             $wav = Join-Path $scratch 'audio.wav'
-            & $cli wav $withAudio.Path $wav | Out-Null
+            & $tool wav $withAudio.Path $wav | Out-Null
             $same = (Hash $wav) -eq (Hash (Join-Path $dir "$name.wav"))
             Result 'drive' $same ("{0}.wav on the drive equals mlvdrive_tool wav" -f $name)
         }
         $chart = ImageHash "$Drive\TestPatterns\TestPatterns_000125.dng" (1920 * 1080 * 2)
-        $cliChart = ImageHash (Join-Path $pat '02.dng') (1920 * 1080 * 2)
-        Result 'drive' ($chart -eq $cliChart) 'TestPatterns frame 125 (chart 2) equals mlvdrive_tool''s chart'
+        $toolChart = ImageHash (Join-Path $pat '02.dng') (1920 * 1080 * 2)
+        Result 'drive' ($chart -eq $toolChart) 'TestPatterns frame 125 (chart 2) equals mlvdrive_tool''s chart'
 
         # --- cache: a clip longer than the 512 MB cache, read twice ---
         Section 'cache'
@@ -183,7 +182,7 @@ try {
             $name = [IO.Path]::GetFileNameWithoutExtension($long.Path)
             $relDir = Split-Path $long.Rel -Parent
             $dir = if ($relDir) { Join-Path "$Drive\" (Join-Path $relDir $name) } else { Join-Path "$Drive\" $name }
-            $read = & $cli read $dir --passes=2
+            $read = & $tool read $dir --passes=2
             $fps = ($read | Select-String 'pass 1: ([\d.]+) frames/s').Matches[0].Groups[1].Value
             Result 'cache' ([double]$fps -gt 24) ("{0} ({1} frames, {2:N1} GB of DNG) read at {3} frames/s (above real time)" -f $name, $long.Frames, ($long.Frames * 4.15 / 1024), $fps)
         }
@@ -214,7 +213,7 @@ try {
             $held = [IO.File]::OpenRead("$Drive\A\A_000002.dng")
             Copy-Item $small[1].Path (Join-Path $live 'B.MLV')
             $t = Wait-Until { Test-Path "$Drive\B" } 20
-            $r = if ($t -ge 0) { Last (& $cli check (Join-Path $live 'B.MLV') 1 "$Drive\B\B_000001.dng" 2>&1) } else { '' }
+            $r = if ($t -ge 0) { Last (& $tool check (Join-Path $live 'B.MLV') 1 "$Drive\B\B_000001.dng" 2>&1) } else { '' }
             Result 'live' ($t -ge 0 -and $r -like 'same as*') ("a clip copied in appears ({0:N1} s) and reads right" -f $t)
 
             $other = if ($small.Count -ge 3 -and $small[2].Frames -ne $aFrames) { $small[2] } else { $small[1] }
