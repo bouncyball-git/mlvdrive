@@ -20,9 +20,8 @@ FrameCache::~FrameCache() {
 }
 
 FrameData FrameCache::make(const ClipEntry& clip, uint32_t frame, std::string* error) {
-    thread_local dng::Writer::Scratch scratch;
     auto data = std::make_shared<std::vector<uint8_t>>();
-    if (!clip.writer->renderFrame(frame, *data, scratch, error)) return nullptr;
+    if (!clip.source->renderFrame(frame, *data, error)) return nullptr;
     return data;
 }
 
@@ -107,7 +106,7 @@ void FrameCache::queueAhead(const ClipEntry& clip, uint32_t frame) {
     const bool forward = s.last >= 0 && f > s.last && f <= s.last + int64_t(depth_) + 1;
     s.last = f;
     if (!forward) return;
-    const uint32_t count = clip.clip->frameCount();
+    const uint32_t count = clip.source->frameCount();
     bool queued = false;
     for (unsigned i = 1; i <= depth_; ++i) {
         const uint64_t next = uint64_t(frame) + i;

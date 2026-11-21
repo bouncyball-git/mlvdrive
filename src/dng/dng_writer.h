@@ -98,6 +98,20 @@ private:
     uint64_t imageSize_ = 0;
 };
 
+// A DNG header for a generated image (the test patterns), not from a clip: 16-bit, uncompressed,
+// RGGB, its colour stated as linear Rec.709 (camera RGB = linear sRGB primaries, D65 white,
+// AsShotNeutral 1 1 1). The image follows the header, which ends on 16 bytes. Every field that
+// changes from frame to frame has a fixed size: the header's size is the same for all frames.
+struct GeneratedFrame {
+    int width = 0, height = 0;
+    int black = 0, white = 65535;
+    int fpsNum = 25, fpsDen = 1;
+    int64_t timecodeFrame = 0;  // counted at round(fps)
+    int64_t dateTime = -1;      // seconds since 1970, local time (-1: none)
+    std::string make, model, reelName;
+};
+std::vector<uint8_t> generatedHeader(const GeneratedFrame& frame);
+
 // Packs 16-bit values into a big-endian (most significant bit first) stream of `bits` per
 // value, each row starting on a byte. Returns the bytes written to `out` (resized).
 size_t packBitsBigEndian(const uint16_t* in, int width, int height, int bits, std::vector<uint8_t>& out);

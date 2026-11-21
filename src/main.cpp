@@ -59,6 +59,9 @@ int usage() {
                  "  --timecode=time  DNG timecode and WAV time reference: the time of day the clip was\n"
                  "                   recorded (the default; clips line up by when they were shot)\n"
                  "  --timecode=count the frames from the start of the clip (00:00:00:00)\n"
+                 "  --test-patterns  add a TestPatterns folder: 12 test charts (colour bars, PLUGE, grey\n"
+                 "                   scale, crosshatch, safe areas, zone plate...), 5 s each, 1080p25; the\n"
+                 "                   MLV folder may then be left out\n"
                  "  --cache=MB       frames kept made (default 512)\n"
                  "  --read-ahead=N   frames made ahead of the one read (default: one per CPU; 0: none)\n"
                  "  --debug          log every file system request\n"
@@ -106,10 +109,17 @@ int wmain(int argc, wchar_t** argv) {
         else if (a == L"--no-fix") options.fix = false;
         else if (a == L"--timecode=time") options.dng.timecode = dng::Timecode::TimeOfDay;
         else if (a == L"--timecode=count") options.dng.timecode = dng::Timecode::FrameCount;
+        else if (a == L"--test-patterns") options.testPatterns = true;
         else if (a == L"--debug") debug = true;
         else if (a.rfind(L"--", 0) == 0) return usage();
         else positional.push_back(a);
     }
+    // With --test-patterns the MLV folder may be left out: `mlvdrive mount --test-patterns [M:]`.
+    auto isDriveLetter = [](const std::wstring& s) {
+        return (s.size() == 1 || (s.size() == 2 && s[1] == L':')) && std::iswalpha(s[0]);
+    };
+    if (options.testPatterns && positional.size() <= 1 && (positional.empty() || isDriveLetter(positional[0])))
+        positional.insert(positional.begin(), L"");
     if (positional.empty() || positional.size() > 2) return usage();
     const std::wstring source = positional[0];
     std::wstring mountPoint = positional.size() == 2 ? positional[1] : L"";
@@ -139,7 +149,8 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "%s\n", error.c_str());
         return 1;
     }
-    std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", narrow(source).c_str(), tree.clipCount(),
+    const std::string what = source.empty() ? std::string("test patterns") : narrow(source);
+    std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", what.c_str(), tree.clipCount(),
                 tree.clipCount() == 1 ? "" : "s", tree.totalBytes() / 1e9, ms);
     std::printf("Mounted on %s (cache %lu MB, read-ahead %lu). Ctrl+C unmounts.\n", narrow(drive.mountPoint()).c_str(),
                 cacheMb, readAhead);

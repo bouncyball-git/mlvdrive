@@ -61,8 +61,8 @@ byte):
 | `src/dng/dng_writer.{h,cpp}` | `src/dng/` | **copied (milestone 2)**: MLV-App's DNG tag set in C++ (matrices, as-shot neutral, timecode, frame rate, reel name, pixel aspect, EXIF), packed / LJ92 / pass-through output. Added here: 16-bit output, the whole DNG in memory, sizes known per clip |
 | `src/mlv/wav.{h,cpp}` | `src/mlv/` | **copied (milestone 5)**: Broadcast WAVE with bext/iXML. Changed here: the header built alone (fixed size per clip), the audio read by range |
 
-From `D:\devel\MLV-App`: `src/mlv/llrawproc/dualiso.c` for dual ISO (milestone 6); `darkframe.c`,
-`patternnoise.c` as optional extras.
+From `D:\devel\MLV-App`: `darkframe.c`, `patternnoise.c` as optional extras. (Dual ISO is out
+of the project for good.)
 
 From `D:\devel\MLVFS\mlvfs`: a reference only (see the order above). Behaviour to match: the
 names Resolve groups, from `main.c`: `<name>_%06d.dng` per frame, `<name>.wav` beside them; the
@@ -210,7 +210,27 @@ in Resolve.
    - Checked on the test clip: audio 10.886 s = 261 frames at 23.976; frame 0 16:42:59:00,
      frame 260 16:43:09:20; TimeReference 2,891,483,483 = frame 1,444,296 = 16:42:59:00;
      ffprobe / exiftool read it; the drive's WAV is byte-identical to the CLI's, in any range.
-6. **Dual ISO** (MLV-App `dualiso.c`), then packed / LJ92 DNG on the drive (see above).
+6. **Test patterns** (done; dual ISO, planned here before, is dropped for good):
+   - `mlvdrive mount [folder] [M:] --test-patterns`: a `TestPatterns` clip folder (the MLV folder
+     may be left out): 12 charts, 5 s each, 1920 x 1080 at 25 fps (1500 frames, 60 s), timecode
+     from 10:00:00:00 (`--timecode=count`: 00:00:00:00). SMPTE RP 219 HD bars, SMPTE bars (SD
+     layout), EBU 100% and 75% bars, PLUGE, 11-step grey scale, grey / R / G / B ramps,
+     16 x 9 crosshatch with circle, framing and safe areas (93% action, 90% title, 4:3, 1.85,
+     2.39), checkerboard, multiburst, zone plate.
+   - `src/vfs/source.h`: a clip folder's frames come from a `FrameSource` (an MLV clip through
+     its writer, or the patterns); `src/vfs/test_patterns`: each chart drawn once in video
+     levels, taken back through the BT.709 curve to linear light, mosaicked RGGB (16-bit, black
+     4096, white 60000: room for sub-black), kept in memory; a frame = header + that image.
+   - `dng::generatedHeader`: a DNG whose camera RGB is linear Rec.709 (ColorMatrix1 = XYZ ->
+     sRGB, D65; ForwardMatrix1 = sRGB -> XYZ D50; AsShotNeutral 1 1 1), Make "MLV Drive",
+     Model "Test Pattern".
+   - `mlvdrive_cli patterns <folder>` writes one frame of each.
+   - Checked: exiftool validates; LibRaw with Rec.709 gamma gives the charts' levels (EBU 75%
+     bars 191/0, white 255; grey scale 0, 25, 51 ... 255); full-resolution looks right (the zone
+     plate's colour moire past Nyquist is the Bayer sampling it is there to show); on the drive:
+     1500 files, timecodes 10:00:00:00 to 10:00:59:24, each chart's image equal to the CLI's,
+     128 frames/s reading in order, alongside MLV clips in one mount.
+   - Packed / LJ92 DNG on the drive (see "DNG output") wait for the Resolve questions.
 7. **Usability**:
    - Install script (copy exe, Start Menu shortcut).
    - Settings: command line + `mlvdrive.ini` (raw corrections, chroma smoothing, bad

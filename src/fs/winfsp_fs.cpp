@@ -69,17 +69,17 @@ struct Drive::Impl {
             info->FileAttributes = FILE_ATTRIBUTE_READONLY;
             info->FileSize = c.wav.size();
             info->AllocationSize = roundUp(info->FileSize);
-            info->IndexNumber = c.id + 1 + c.clip->frameCount();
+            info->IndexNumber = c.id + 1 + c.source->frameCount();
             info->CreationTime = info->LastAccessTime = info->LastWriteTime = info->ChangeTime = c.time;
         } else {
             const vfs::ClipEntry& c = *n.dir->clip;
             info->FileAttributes = FILE_ATTRIBUTE_READONLY;
-            info->FileSize = c.writer->fileSize();
+            info->FileSize = c.source->fileSize();
             info->AllocationSize = roundUp(info->FileSize);
             info->IndexNumber = c.id + 1 + n.frame;
             // Frames apart by their time in the clip, so the files sort by time as well as by name.
-            const uint64_t ts = c.clip->frame(n.frame).timestamp - c.clip->frame(0).timestamp;  // microseconds
-            info->CreationTime = info->LastAccessTime = info->LastWriteTime = info->ChangeTime = c.time + ts * 10;
+            info->CreationTime = info->LastAccessTime = info->LastWriteTime = info->ChangeTime =
+                c.time + c.source->frameOffset(n.frame);
         }
     }
 
@@ -189,15 +189,15 @@ struct Drive::Impl {
         }
         if (ctx->node.kind != vfs::Node::Frame) return STATUS_INVALID_DEVICE_REQUEST;
         const vfs::ClipEntry& c = *ctx->node.dir->clip;
-        const uint64_t size = c.writer->fileSize();
+        const uint64_t size = c.source->fileSize();
         if (offset >= size) return STATUS_END_OF_FILE;
         const uint64_t end = std::min<uint64_t>(size, offset + length);
 
         std::lock_guard<std::mutex> lock(ctx->mutex);
         const std::vector<uint8_t>* bytes = ctx->file.get();
         if (!bytes) {
-            if (end <= c.writer->headerSize()) {
-                if (ctx->header.empty() && !c.writer->renderHeader(ctx->node.frame, ctx->header))
+            if (end <= c.source->headerSize()) {
+                if (ctx->header.empty() && !c.source->renderHeader(ctx->node.frame, ctx->header))
                     return STATUS_UNEXPECTED_IO_ERROR;
                 bytes = &ctx->header;
             } else {
@@ -246,7 +246,7 @@ struct Drive::Impl {
                 vfs::Node f;
                 f.kind = vfs::Node::Frame;
                 f.dir = dir;
-                const uint32_t frames = dir->clip->clip->frameCount();
+                const uint32_t frames = dir->clip->source->frameCount();
                 for (uint32_t i = 0; ok && i < frames; ++i) {
                     f.frame = i;
                     self->fileInfo(f, &info);

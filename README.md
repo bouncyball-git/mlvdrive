@@ -18,9 +18,15 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 
 ```
 mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--timecode=time|count]
-               [--cache=MB] [--read-ahead=N] [--debug]
+               [--test-patterns] [--cache=MB] [--read-ahead=N] [--debug]
+mlvdrive mount --test-patterns [M:]
 mlvdrive unmount M:
 ```
+
+`--test-patterns` adds a `TestPatterns` folder of 12 test charts, 5 seconds each (1080p25,
+timecode from 10:00:00:00): SMPTE RP 219 HD bars, SMPTE bars, EBU 100% and 75% bars, PLUGE, grey
+scale, ramps, crosshatch, framing and safe areas, checkerboard, multiburst, zone plate. Their DNGs
+state linear Rec.709 colour, so a raw developer with Rec.709 gamma shows the charts' levels.
 
 Every MLV clip under the folder (subfolders included) shows as a folder of DNG files,
 `NAME\NAME_000000.dng` onward, made when they are read, and `NAME\NAME.wav` when the clip has
@@ -41,6 +47,7 @@ mlvdrive_cli check <clip.MLV> <frame> <file.dng>  a DNG read back and compared w
 mlvdrive_cli bench <clip.MLV> [frames]            ms a frame per stage, frames/s on every thread
     --dng=16|packed|lj92|pass   DNG format (default 16-bit)    --no-fix   no raw corrections
 mlvdrive_cli wav   <clip.MLV> <out.wav>           the clip's audio, as the drive shows it
+mlvdrive_cli patterns <folder>                    one DNG of each test pattern (01.dng ... 12.dng)
     --timecode=time|count (dng, wav)   timecode: time of day (default) or from 00:00:00:00
 mlvdrive_cli selftest <clip.MLV>                  every frame: fast decoder and vector corrections
                                                   against the original code, value for value;

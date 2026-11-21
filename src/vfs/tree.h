@@ -6,6 +6,7 @@
 //
 // Subfolders holding clips are kept; everything else in the source folder is left out. Every
 // name, size and date is known once the clips are opened: no frame is made to list the tree.
+// With the test patterns on, a clip folder "TestPatterns" of generated frames is added too.
 // The tree doesn't change after it is built, so any number of threads may read it.
 #pragma once
 
@@ -13,6 +14,7 @@
 #include "mlv/clip.h"
 #include "mlv/wav.h"
 #include "raw/rawfix.h"
+#include "vfs/source.h"
 
 #include <cstdint>
 #include <functional>
@@ -26,10 +28,12 @@ namespace vfs {
 // Times are Windows FILETIME values (100 ns since 1601, UTC).
 struct ClipEntry {
     std::wstring name;  // the folder's name and the files' prefix ("M21-1642")
+    // An MLV clip's (null for the test patterns):
     std::unique_ptr<mlv::Clip> clip;
     std::unique_ptr<raw::Fixer> fixer;
     std::unique_ptr<dng::Writer> writer;
     mlv::WavLayout wav;  // its audio as a WAV file (empty header: none)
+    std::unique_ptr<FrameSource> source;  // what the DNG files are made from (uses the above)
     uint64_t time = 0;  // when the clip was recorded (or the file's date)
     uint64_t id = 0;    // index numbers: the folder's; frame N's file is id + 1 + N, the WAV's
                         // id + 1 + frame count
@@ -55,6 +59,7 @@ struct BuildOptions {
     dng::Options dng;
     raw::FixSettings fixes;
     bool fix = true;
+    bool testPatterns = false;  // add the "TestPatterns" clip folder
 };
 
 class Tree {
@@ -76,6 +81,8 @@ public:
     static std::wstring wavName(const ClipEntry& clip) { return clip.name + L".wav"; }
 
 private:
+    void addClip(Dir* parent, std::unique_ptr<ClipEntry> entry, uint64_t* nextId);
+
     Dir root_;
     std::vector<std::unique_ptr<ClipEntry>> clips_;
     uint64_t totalBytes_ = 0;

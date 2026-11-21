@@ -7,6 +7,8 @@
 //   mlvdrive_cli bench <clip.MLV> [frames]              ms a frame per stage, then frames/s on
 //                                                       every thread
 //   mlvdrive_cli wav   <clip.MLV> <out.wav>             the clip's audio as the drive shows it
+//   mlvdrive_cli patterns <folder>                      the first frame of each test pattern as
+//                                                       a DNG (01.dng ... 12.dng)
 //   mlvdrive_cli selftest <clip.MLV>                    every frame: the fast decoder against the
 //                                                       original one, the vector raw corrections
 //                                                       against the scalar ones (value for value);
@@ -28,6 +30,7 @@
 #include "parallel.h"
 #include "raw/rawfix.h"
 #include "util/file.h"
+#include "vfs/test_patterns.h"
 
 #include <algorithm>
 #include <atomic>
@@ -62,6 +65,7 @@ int usage() {
                  "       mlvdrive_cli check <clip.MLV> <frame> <file.dng> [--no-fix]\n"
                  "       mlvdrive_cli bench <clip.MLV> [frames] [--dng=16|packed|lj92|pass] [--no-fix]\n"
                  "       mlvdrive_cli wav   <clip.MLV> <out.wav> [--timecode=time|count]\n"
+                 "       mlvdrive_cli patterns <folder>\n"
                  "       mlvdrive_cli selftest <clip.MLV>\n"
                  "       mlvdrive_cli read  <folder> [--threads=N] [--passes=N] [--buffered]\n");
     return 2;
@@ -520,6 +524,29 @@ int writeWavFile(const Args& a) {
     return 0;
 }
 
+// --- patterns ---
+
+int writePatterns(const Args& a) {
+    if (a.positional.size() != 1) return usage();
+    auto source = vfs::makeTestPatterns(true);
+    const uint32_t each = source->frameCount() / vfs::kTestPatternCount;
+    std::vector<uint8_t> bytes;
+    std::string error;
+    for (int p = 0; p < vfs::kTestPatternCount; ++p) {
+        char name[16];
+        std::snprintf(name, sizeof name, "%02d.dng", p + 1);
+        const std::string path = a.positional[0] + "/" + name;
+        auto t0 = Clock::now();
+        if (!source->renderFrame(uint32_t(p) * each, bytes, &error) ||
+            !util::writeFile(path, bytes.data(), bytes.size(), nullptr, 0, &error)) {
+            std::fprintf(stderr, "%s: %s\n", path.c_str(), error.c_str());
+            return 1;
+        }
+        std::printf("%s  %-32s %.0f ms\n", name, vfs::testPatternName(p), msSince(t0));
+    }
+    return 0;
+}
+
 // --- selftest ---
 
 int selftest(const Args& a) {
@@ -713,6 +740,7 @@ int main(int argc, char** argv) {
     else if (cmd == "read") rc = readFolder(a);
     else if (cmd == "selftest") rc = selftest(a);
     else if (cmd == "wav") rc = writeWavFile(a);
+    else if (cmd == "patterns") rc = writePatterns(a);
     else return usage();
     par::shutdown();
     return rc;

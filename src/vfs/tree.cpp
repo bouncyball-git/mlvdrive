@@ -1,6 +1,7 @@
 #include "vfs/tree.h"
 
 #include "util/file.h"
+#include "vfs/test_patterns.h"
 
 #include <algorithm>
 #include <atomic>
@@ -108,6 +109,29 @@ uint64_t datesFromClips(Dir* dir) {
     return dir->time;
 }
 
+// An MLV clip's frames, through its DNG writer.
+class MlvSource : public FrameSource {
+public:
+    MlvSource(const mlv::Clip& clip, const dng::Writer& writer) : clip_(clip), writer_(writer) {}
+    uint32_t frameCount() const override { return clip_.frameCount(); }
+    uint64_t headerSize() const override { return writer_.headerSize(); }
+    uint64_t fileSize() const override { return writer_.fileSize(); }
+    uint64_t frameOffset(uint32_t frame) const override {
+        return (clip_.frame(frame).timestamp - clip_.frame(0).timestamp) * 10;  // microseconds -> 100 ns
+    }
+    bool renderHeader(uint32_t frame, std::vector<uint8_t>& out) const override {
+        return writer_.renderHeader(frame, out);
+    }
+    bool renderFrame(uint32_t frame, std::vector<uint8_t>& out, std::string* error) const override {
+        thread_local dng::Writer::Scratch scratch;
+        return writer_.renderFrame(frame, out, scratch, error);
+    }
+
+private:
+    const mlv::Clip& clip_;
+    const dng::Writer& writer_;
+};
+
 }  // namespace
 
 std::wstring Tree::frameName(const ClipEntry& clip, uint32_t frame) {
@@ -120,23 +144,25 @@ bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
                  const std::function<void(const std::string&)>& log, std::string* error) {
     const fs::path source(sourceFolder);
     std::error_code ec;
-    if (!fs::is_directory(source, ec)) {
-        if (error) *error = "not a folder: " + util::u8(source);
-        return false;
-    }
-
-    // --- The clips: every .MLV under the folder (its .M00, .M01 ... are opened with it) ---
+    // --- The clips: every .MLV under the folder (its .M00, .M01 ... are opened with it); no
+    //     folder: none (the test patterns alone) ---
     std::vector<fs::path> paths;
-    fs::recursive_directory_iterator it(source, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-        if (error) *error = "can't read " + util::u8(source) + ": " + ec.message();
-        return false;
+    if (!sourceFolder.empty()) {
+        if (!fs::is_directory(source, ec)) {
+            if (error) *error = "not a folder: " + util::u8(source);
+            return false;
+        }
+        fs::recursive_directory_iterator it(source, fs::directory_options::skip_permission_denied, ec);
+        if (ec) {
+            if (error) *error = "can't read " + util::u8(source) + ": " + ec.message();
+            return false;
+        }
+        for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (it->is_regular_file(ec) && isMlv(it->path())) paths.push_back(it->path());
+        }
+        std::sort(paths.begin(), paths.end());
     }
-    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        if (it->is_regular_file(ec) && isMlv(it->path())) paths.push_back(it->path());
-    }
-    std::sort(paths.begin(), paths.end());
 
     // Opened on several threads: a clip is indexed by reading every block header of every chunk.
     std::vector<std::unique_ptr<ClipEntry>> opened(paths.size());
@@ -161,6 +187,7 @@ bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
             // The audio, its time reference on frame 0's DNG timecode.
             e->wav = mlv::wavLayout(*clip, mlv::wavTimeReference(*clip, e->writer->timecodeFrame(0),
                                                                   e->writer->frameRate()));
+            e->source = std::make_unique<MlvSource>(*clip, *e->writer);
             e->clip = std::move(clip);
             opened[i] = std::move(e);
         }
@@ -179,7 +206,7 @@ bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
     for (size_t i = 0; i < paths.size(); ++i) {
         if (!opened[i]) continue;
         ClipEntry* e = opened[i].get();
-        if (e->writer->fileSize() == 0) {
+        if (e->source->fileSize() == 0) {
             if (error) *error = "the drive needs a DNG format of fixed size (16-bit or packed)";
             return false;
         }
@@ -196,24 +223,36 @@ bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
             }
             parent = d;
         }
-        // Two clips named alike in one folder (A.MLV, and a folder "A" of clips): "A (2)".
-        std::wstring name = e->name;
-        for (int n = 2; childDir(parent, name); ++n) name = e->name + L" (" + std::to_wstring(n) + L")";
-        e->name = name;
-        parent->dirs.push_back(std::make_unique<Dir>());
-        Dir* d = parent->dirs.back().get();
-        d->name = name;
-        d->time = e->time;
-        d->clip = e;
-        e->id = nextId;
-        d->id = nextId;
-        nextId += 2 + e->clip->frameCount();
-        totalBytes_ += e->writer->fileSize() * e->clip->frameCount() + e->wav.size();
-        clips_.push_back(std::move(opened[i]));
+        addClip(parent, std::move(opened[i]), &nextId);
+    }
+    if (options.testPatterns) {
+        auto e = std::make_unique<ClipEntry>();
+        e->name = L"TestPatterns";
+        e->time = now();
+        e->source = makeTestPatterns(options.dng.timecode == dng::Timecode::TimeOfDay);
+        addClip(&root_, std::move(e), &nextId);
     }
     sortTree(&root_);
     datesFromClips(&root_);
     return true;
+}
+
+void Tree::addClip(Dir* parent, std::unique_ptr<ClipEntry> entry, uint64_t* nextId) {
+    ClipEntry* e = entry.get();
+    // Two clips named alike in one folder (A.MLV, and a folder "A" of clips): "A (2)".
+    std::wstring name = e->name;
+    for (int n = 2; childDir(parent, name); ++n) name = e->name + L" (" + std::to_wstring(n) + L")";
+    e->name = name;
+    parent->dirs.push_back(std::make_unique<Dir>());
+    Dir* d = parent->dirs.back().get();
+    d->name = name;
+    d->time = e->time;
+    d->clip = e;
+    e->id = *nextId;
+    d->id = *nextId;
+    *nextId += 2 + e->source->frameCount();
+    totalBytes_ += e->source->fileSize() * e->source->frameCount() + e->wav.size();
+    clips_.push_back(std::move(entry));
 }
 
 Node Tree::find(const wchar_t* path) const {
@@ -247,7 +286,7 @@ Node Tree::find(const wchar_t* path) const {
             uint64_t frame = 0;
             size_t i = prefix;
             for (; i < len && *(p + i) >= L'0' && *(p + i) <= L'9' && i - prefix < 10; ++i) frame = frame * 10 + (p[i] - L'0');
-            if (i == prefix || frame >= c.clip->frameCount()) return n;
+            if (i == prefix || frame >= c.source->frameCount()) return n;
             const std::wstring expected = frameName(c, uint32_t(frame));  // leading zeros, extension
             if (compareNames(p, len, expected.data(), expected.size()) != 0) return n;
             n.kind = Node::Frame;

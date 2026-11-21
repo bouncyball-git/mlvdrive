@@ -48,7 +48,7 @@ else()
 endif()
 
 # --- The drive's contents: clips found under a folder, as folders of DNG files ---
-add_library(mlv_vfs STATIC src/vfs/tree.cpp src/vfs/frame_cache.cpp)
+add_library(mlv_vfs STATIC src/vfs/tree.cpp src/vfs/frame_cache.cpp src/vfs/test_patterns.cpp)
 target_link_libraries(mlv_vfs PUBLIC mlv_core)
 if(MSVC)
     target_compile_options(mlv_vfs PRIVATE /W3 /O2)
@@ -83,7 +83,7 @@ endif()
 
 # --- mlvdrive_cli: clip info, one DNG to disk, timings ---
 add_executable(mlvdrive_cli tools/cli.cpp)
-target_link_libraries(mlvdrive_cli PRIVATE mlv_core)
+target_link_libraries(mlvdrive_cli PRIVATE mlv_vfs)
 if(MSVC)
     target_compile_options(mlvdrive_cli PRIVATE /W3)
 endif()

@@ -180,6 +180,82 @@ void ToRationals(const double* v, size_t n, int32_t den, int32_t* out) {
 
 }  // namespace
 
+std::vector<uint8_t> generatedHeader(const GeneratedFrame& g) {
+    Directory ifd0, exif;
+    const double fps = g.fpsDen ? double(g.fpsNum) / g.fpsDen : 0;
+    uint8_t timecode[8];
+    TimecodeBytes(fps, g.timecodeFrame, timecode);
+    const std::string dateTime = DateTimeText(g.dateTime);
+    const uint8_t cfaBytes[4] = {0, 1, 1, 2};  // RGGB
+    const uint8_t dngVersion[4] = {1, 4, 0, 0};
+
+    // Camera RGB is linear Rec.709: ColorMatrix (XYZ -> camera) = XYZ -> linear sRGB (D65), and
+    // ForwardMatrix (white-balanced camera -> XYZ D50) = linear sRGB -> XYZ, Bradford-adapted.
+    const double toCamera[9] = {3.2404542, -1.5371385, -0.4985314, -0.9692660, 1.8760108,
+                                0.0415560, 0.0556434,  -0.2040259, 1.0572252};
+    const double forward[9] = {0.4360747, 0.3850649, 0.1430804, 0.2225045, 0.7168786,
+                               0.0606169, 0.0139322, 0.0971045, 0.7141733};
+    int32_t colorMatrix[18], forwardMatrix[18];
+    ToRationals(toCamera, 9, 10000000, colorMatrix);
+    ToRationals(forward, 9, 10000000, forwardMatrix);
+    const int32_t neutral[6] = {1, 1, 1, 1, 1, 1};
+    const int32_t frameRate[2] = {g.fpsNum, g.fpsDen};
+    const int32_t defaultScale[4] = {1, 1, 1, 1};
+
+    ifd0.longValue(254, 0);                               // NewSubFileType: main image
+    ifd0.longValue(256, uint32_t(g.width));               // ImageWidth
+    ifd0.longValue(257, uint32_t(g.height));              // ImageLength
+    ifd0.shortValue(258, 16);                             // BitsPerSample
+    ifd0.shortValue(259, 1);                              // Compression: none
+    ifd0.shortValue(262, 32803);                          // PhotometricInterpretation: CFA
+    ifd0.ascii(271, g.make);                              // Make
+    ifd0.ascii(272, g.model);                             // Model
+    ifd0.longValue(273, 0);                               // StripOffsets (set below)
+    ifd0.shortValue(274, 1);                              // Orientation
+    ifd0.shortValue(277, 1);                              // SamplesPerPixel
+    ifd0.longValue(278, uint32_t(g.height));              // RowsPerStrip
+    ifd0.longValue(279, uint32_t(uint64_t(g.width) * g.height * 2));  // StripByteCounts
+    ifd0.shortValue(284, 1);                              // PlanarConfiguration
+    ifd0.ascii(305, kSoftware);                           // Software
+    ifd0.ascii(306, dateTime);                            // DateTime
+    ifd0.shorts(33421, {2, 2});                           // CFARepeatPatternDim
+    ifd0.bytes(33422, cfaBytes, 4);                       // CFAPattern
+    ifd0.longValue(34665, 0);                             // ExifIFD (set below)
+    ifd0.bytes(50706, dngVersion, 4);                     // DNGVersion 1.4
+    ifd0.ascii(50708, g.make + " " + g.model);            // UniqueCameraModel
+    ifd0.longValue(50714, uint32_t(g.black));             // BlackLevel
+    ifd0.longValue(50717, uint32_t(g.white));             // WhiteLevel
+    ifd0.rationals(50718, kRational, defaultScale, 2);    // DefaultScale
+    ifd0.shorts(50719, {0, 0});                           // DefaultCropOrigin
+    ifd0.shorts(50720, {uint16_t(g.width), uint16_t(g.height)});  // DefaultCropSize
+    ifd0.rationals(50721, kSRational, colorMatrix, 9);    // ColorMatrix1
+    ifd0.rationals(50728, kRational, neutral, 3);         // AsShotNeutral
+    ifd0.srational(50730, 0, 1);                          // BaselineExposure
+    ifd0.shortValue(50778, 21);                           // CalibrationIlluminant1: D65
+    ifd0.rationals(50964, kSRational, forwardMatrix, 9);  // ForwardMatrix1
+    ifd0.bytes(51043, timecode, 8);                       // TimeCodes
+    ifd0.rationals(51044, kSRational, frameRate, 1);      // FrameRate
+    ifd0.ascii(51081, g.reelName);                        // ReelName
+    ifd0.srational(51109, 0, 1);                          // BaselineExposureOffset
+    const uint8_t exifVersion[4] = {'0', '2', '3', '0'};
+    exif.add(36864, kUndefined, 4, exifVersion, 4);       // ExifVersion
+    exif.ascii(36867, dateTime);                          // DateTimeOriginal
+
+    const size_t ifd0At = 8;
+    const size_t exifAt = ifd0At + ifd0.tableSize();
+    const size_t dataAt = exifAt + exif.tableSize();
+    const size_t exifDataAt = dataAt + ifd0.dataSize();
+    const size_t end = (exifDataAt + exif.dataSize() + 15) & ~size_t(15);
+    ifd0.setLong(34665, uint32_t(exifAt));
+    ifd0.setLong(273, uint32_t(end));
+    std::vector<uint8_t> out(end, 0);
+    const uint8_t tiff[8] = {'I', 'I', 42, 0, 8, 0, 0, 0};
+    std::memcpy(out.data(), tiff, 8);
+    ifd0.write(out, ifd0At, dataAt);
+    exif.write(out, exifAt, exifDataAt);
+    return out;
+}
+
 size_t packBitsBigEndian(const uint16_t* in, int width, int height, int bits, std::vector<uint8_t>& out) {
     const size_t rowBytes = (size_t(width) * bits + 7) / 8;
     out.resize(rowBytes * height);
