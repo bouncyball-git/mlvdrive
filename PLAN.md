@@ -282,6 +282,28 @@ in Resolve.
      `build.ps1 package` makes `dist\MLVDrive-<version>-win64.zip` (2.8 MB). Checked: installed
      from the unpacked zip over a running copy, started, `M:` back with every frame checked.
      Version 0.2.0 since.
+   - Installer (0.2.0): `installer/mlvdrive.iss`, `build.ps1 setup` ->
+     `dist\MLVDrive-<version>-setup.exe` (2.5 MB; Inno Setup 6). Types Default (tray app +
+     command-line drive) and Custom (gui / cli / tool components; at least one of gui and cli,
+     checked on the components page and before installing, also when silent). Per user by
+     default (`{autopf}`: %LOCALAPPDATA%\Programs), all users on request. Tasks: desktop
+     shortcut, start with Windows (the tray's Run value), PATH (user or machine, removed on
+     uninstall). Upgrades: programs using the files are closed (Restart Manager; the tray app
+     unmounts on WM_ENDSESSION), deselected programs and old names removed. WinFsp: detected
+     (HKLM32\SOFTWARE\WinFsp InstallDir, bin\winfsp-x64.dll version >= 2.1); if not, a page
+     offers to download the latest from winfsp.dev: the page's first link to
+     github.com/winfsp/winfsp/releases/download/.../winfsp-*.msi, run (msiexec, elevated) only
+     if Get-AuthenticodeSignature says Valid and signed by NAVIMATICS LLC (its module loaded by
+     path: started from PowerShell 7, setup passes a module path that breaks Windows PowerShell's
+     autoload); any failure: MLV Drive installs anyway, winfsp.dev offered. Uninstall: quits the
+     tray app only if it runs from this installation (WMI), removes "start with Windows" only if
+     it points here, asks before deleting the settings, leaves WinFsp. The zip is portable now
+     (no install scripts); `build.ps1 install` keeps using tools/install.ps1 for development.
+     Checked (silent, into a scratch folder, beside the real install): tool alone refused;
+     everything + PATH installs; /TESTWINFSP finds 2.1.25156 on winfsp.dev, downloads it,
+     verifies NAVIMATICS LLC; gui alone removes the other programs; uninstall removes files,
+     PATH entry and Add/Remove entry; the running tray app of the other installation untouched.
+     Not tested: the wizard by hand, and WinFsp's actual install (it is installed here).
    - Live folders (0.2.0): a rescan builds a new tree from the old one: clips whose files have
      the same size and date (every chunk) are taken over as they are (same ClipEntry, frames
      still cached), new or changed ones opened. The drive swaps trees (`Drive::update`): opens

@@ -1,6 +1,6 @@
 # Builds MLV Drive on Windows (Visual Studio 2022 or its Build Tools, with CMake and Ninja).
 #
-#   .\build.ps1 [clean] [build] [install] [uninstall] [package] [-Config Release|Debug|RelWithDebInfo]
+#   .\build.ps1 [clean] [build] [install] [uninstall] [package] [setup] [-Config Release|Debug|RelWithDebInfo]
 #
 #   clean      deletes the build folder
 #   build      configures (if needed) and builds (the default action):
@@ -12,8 +12,11 @@
 #              stops a running copy first. WinFsp must be installed separately (https://winfsp.dev/rel/)
 #   uninstall  removes them, the shortcut and "Start with Windows"; keeps the settings
 #              (%APPDATA%\MLV Drive)
-#   package    dist\MLVDrive-<version>-win64.zip: the programs, pixel maps, README, LICENSE and the
-#              installer (install.cmd / uninstall.cmd), for a GitHub release
+#   package    dist\MLVDrive-<version>-win64.zip: the programs, pixel maps, README and LICENSE, to
+#              run from any folder (portable)
+#   setup      dist\MLVDrive-<version>-setup.exe: the installer (installer\mlvdrive.iss; needs Inno
+#              Setup 6, https://jrsoftware.org/isdl.php): default or custom (tray app, command-line
+#              drive, mlvdrive_tool), per user or all users, WinFsp from winfsp.dev if missing
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(ValueFromRemainingArguments = $true)] [string[]] $Actions,
@@ -109,14 +112,31 @@ foreach ($action in $Actions) {
             New-Item -ItemType Directory -Force $dist | Out-Null
             $zip = Join-Path $dist "MLVDrive-$version-win64.zip"
             if (Test-Path $zip) { Remove-Item -Force $zip }
-            # The files inside a folder named after the release, as people unpack it.
+            # The files inside a folder named after the release, as people unpack it; portable: no
+            # installer scripts (the setup installs).
             $named = Join-Path $BuildDir "MLVDrive-$version"
             if (Test-Path $named) { Remove-Item -Recurse -Force $named }
             Copy-Item $stage $named -Recurse
+            Remove-Item (Join-Path $named 'install.ps1'), (Join-Path $named 'install.cmd'), (Join-Path $named 'uninstall.cmd')
             Compress-Archive -Path $named -DestinationPath $zip
             Remove-Item -Recurse -Force $named
             Step ("package: {0} ({1:N1} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
         }
-        default { throw "unknown action '$action' (clean, build, install, uninstall, package)" }
+        'setup' {
+            $stage = New-Stage
+            $version = Get-Version
+            $iscc = @((Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+                      (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+                      (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe')) |
+                Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $iscc) { throw 'Inno Setup 6 not found (https://jrsoftware.org/isdl.php, or winget install JRSoftware.InnoSetup)' }
+            $dist = Join-Path $Root 'dist'
+            New-Item -ItemType Directory -Force $dist | Out-Null
+            Step "setup: Inno Setup ($iscc)"
+            Run $iscc /Q "/DAppVersion=$version" "/DStage=$stage" "/DRoot=$Root" "/DDist=$dist" (Join-Path $Root 'installer\mlvdrive.iss')
+            $exe = Join-Path $dist "MLVDrive-$version-setup.exe"
+            Step ("setup: {0} ({1:N1} MB)" -f $exe, ((Get-Item $exe).Length / 1MB))
+        }
+        default { throw "unknown action '$action' (clean, build, install, uninstall, package, setup)" }
     }
 }

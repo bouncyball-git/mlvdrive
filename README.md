@@ -15,17 +15,33 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 .\build.ps1 install     # for the current user (no administrator rights): the programs into
                         # %LOCALAPPDATA%\Programs\MLV Drive, a Start Menu shortcut "MLV Drive"
 .\build.ps1 uninstall   # removes them (the settings stay)
-.\build.ps1 package     # dist\MLVDrive-<version>-win64.zip, for a GitHub release
+.\build.ps1 package     # dist\MLVDrive-<version>-win64.zip: portable (no installer)
+.\build.ps1 setup       # dist\MLVDrive-<version>-setup.exe: the installer (needs Inno Setup 6)
 ```
 
 The version is set once, in `CMakeLists.txt` (`project(... VERSION ...)`). `tools/make_icons.py`
-draws the icons in `assets/` (only needed to change them).
+draws the icons in `assets/` (only needed to change them). The installer is
+`installer/mlvdrive.iss`.
 
 ## Installing a release
 
-Unpack `MLVDrive-<version>-win64.zip` and run `install.cmd`: it installs MLV Drive for the current
-user (no administrator rights) and starts it; `uninstall.cmd` removes it. MLV Drive needs
-[WinFsp](https://winfsp.dev/rel/), installed separately.
+Run `MLVDrive-<version>-setup.exe`:
+
+- **Default** installs the tray app and the command-line drive; **Custom** chooses among the tray
+  app, the command-line drive (`mlvdrive.exe`) and `mlvdrive_tool.exe`, with at least one of the
+  first two (they are what shows the drive).
+- For the current user (no administrator rights) or for all users.
+- Options: desktop shortcut, start with Windows, add the command-line programs to PATH.
+- MLV Drive needs [WinFsp](https://winfsp.dev/rel/). If it is missing (or older than 2.1), setup
+  offers to download the latest version from winfsp.dev and install it; the downloaded installer
+  is run only if it carries a valid signature of WinFsp's publisher (NAVIMATICS LLC). Without it,
+  MLV Drive installs anyway and the tray app points to WinFsp.
+- Uninstalling (Settings > Apps) asks whether to delete the settings too; WinFsp stays.
+
+Silent installs: `/VERYSILENT /CURRENTUSER /COMPONENTS=gui,cli,tool /TASKS=addpath` (Inno Setup's
+usual switches).
+
+`MLVDrive-<version>-win64.zip` is the portable alternative: the same programs, run from any folder.
 
 ## The tray app
 
