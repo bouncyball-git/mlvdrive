@@ -171,7 +171,9 @@ int wmain(int argc, wchar_t** argv) {
     std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", what.c_str(), info.clips,
                 info.clips == 1 ? "" : "s", info.bytes / 1e9, info.openMs);
     std::printf("Mounted on %s (cache %u MB, read-ahead %u%s). Ctrl+C unmounts.\n", app::narrow(info.mountPoint).c_str(),
-                info.cacheMb, info.readAhead, s.watch ? ", watching the folders" : "");
+                info.cacheMb, info.readAhead,
+                !s.watch ? "" : info.polling ? ", watching the folders, network ones also every 30 s"
+                                             : ", watching the folders");
     std::fflush(stdout);
 
     g_stop = CreateEventW(nullptr, TRUE, FALSE, app::stopEventName(info.mountPoint).c_str());

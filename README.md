@@ -32,15 +32,16 @@ user (no administrator rights) and starts it; `uninstall.cmd` removes it. MLV Dr
 "MLV Drive" (`mlvdrive_tray.exe`) sits in the notification area: its icon is in colour while the
 drive is mounted, grey when not. Right-click (or click) it for the menu: mount and unmount, open the
 drive in Explorer (double-click does too), add and remove MLV folders, the drive letter, the DNG format,
-raw corrections (focus and bad pixels too), timecode and the test patterns, rescan the folders,
-watch them, mount when it starts, start with Windows, edit the settings file. A change while
-mounted mounts again with it. WinFsp must be installed (https://winfsp.dev/rel/); the menu says so
-if it isn't.
+raw corrections (focus and bad pixels too), timecode and the test patterns, watch the folders,
+mount when it starts, start with Windows, edit the settings file. A change while mounted mounts
+again with it. WinFsp must be installed (https://winfsp.dev/rel/); the menu says so if it isn't.
 
 Clips added to, removed from or changed in the folders show on the drive by themselves (2 seconds
 after the folders were last touched, so a clip being copied shows once it is complete), without
-unmounting: files already open keep working, and Explorer refreshes. "Rescan the folders" (or
-`mlvdrive rescan M:`) looks at once.
+unmounting: files already open keep working, and Explorer refreshes. Folders on a network drive or
+share, whose changes Windows may not report, are also looked at every 30 seconds (local ones
+aren't: that would keep sleeping disks awake). With watching off, the menu has "Rescan the
+folders"; `mlvdrive rescan M:` looks at once either way (for scripts).
 
 ## Settings
 

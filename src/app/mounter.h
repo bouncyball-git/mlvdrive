@@ -4,8 +4,10 @@
 // While mounted, the folders can be looked at again (rescan()): clips added, removed or changed
 // show up without unmounting (open files keep working; Windows is told what changed). With
 // `watch` on, that happens by itself: the folders are watched, and a rescan follows 2 seconds after
-// they last changed (so a clip being copied shows once it is complete). `mlvdrive rescan M:` asks
-// for one at once.
+// they last changed (so a clip being copied shows once it is complete). Folders whose changes
+// Windows may not report (on a network drive or share, or that can't be watched) are also looked
+// at every 30 seconds; local ones aren't (that would keep sleeping disks awake). `mlvdrive rescan
+// M:` asks for one at once.
 //
 // mount(), unmount() and rescan() may be called from different threads (one at a time inside).
 #pragma once
@@ -31,6 +33,7 @@ namespace app {
 
 struct MountInfo {
     std::wstring mountPoint;  // "M:"
+    bool polling = false;     // some folders are also looked at every 30 seconds
     size_t clips = 0;         // clip folders (the test patterns count as one)
     uint64_t bytes = 0;       // the files' total size
     double openMs = 0;        // finding and opening the clips

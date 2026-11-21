@@ -317,7 +317,7 @@ void ShowMenu() {
         item(menu, kGetWinFsp, L"Get WinFsp (needed for the drive)…");
     } else if (mounted) {
         item(menu, kOpen, L"Open " + g_info.mountPoint + L" in Explorer");
-        item(menu, kRescan, L"Rescan the folders", !busy);
+        if (!g_settings.watch) item(menu, kRescan, L"Rescan the folders", !busy);  // watched: not needed
         item(menu, kUnmount, L"Unmount " + g_info.mountPoint, !busy);
     } else {
         const bool canMount = !busy && (!g_settings.folders.empty() || g_settings.testPatterns);

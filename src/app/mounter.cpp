@@ -65,12 +65,24 @@ std::wstring widen(const std::string& s) {
     return w;
 }
 
+// Whether Windows may not report a folder's changes: on a network drive or a share (SMB
+// notifications are unreliable: some servers send none, they can stop after a reconnect).
+bool IsRemote(const std::wstring& folder) {
+    if (folder.rfind(L"\\\\", 0) == 0) return true;  // \\server\share
+    wchar_t volume[MAX_PATH];
+    if (!GetVolumePathNameW(folder.c_str(), volume, MAX_PATH)) return false;
+    return GetDriveTypeW(volume) == DRIVE_REMOTE;
+}
+
+constexpr DWORD kPollMs = 30000;
+
 // --- Watching the folders ---
 //
 // One thread per folder waits for Windows' change notifications (the whole subtree: names, sizes,
 // dates); a folder that isn't there (an unplugged drive) is tried again every 5 seconds and counts
 // as a change when it comes. Another thread rescans once nothing has changed for 2 seconds, or at
-// once when `mlvdrive rescan` sets the named event.
+// once when `mlvdrive rescan` sets the named event, and every 30 seconds while some folder may
+// change unreported (remote, or Windows won't watch it).
 class Mounter::Watcher {
 public:
     Watcher(Mounter& owner, const std::vector<std::wstring>& folders, bool watchFolders, const std::wstring& mountPoint)
@@ -78,10 +90,15 @@ public:
         stop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         changed_ = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         rescanNow_ = CreateEventW(nullptr, FALSE, FALSE, rescanEventName(mountPoint).c_str());
-        if (watchFolders)
-            for (const auto& f : folders) threads_.emplace_back([this, f] { watchFolder(f); });
+        if (watchFolders) {
+            for (const auto& f : folders) {
+                if (IsRemote(f)) polling_ = true;
+                threads_.emplace_back([this, f] { watchFolder(f); });
+            }
+        }
         threads_.emplace_back([this] { rescanLoop(); });
     }
+    bool polling() const { return polling_; }
     ~Watcher() {
         SetEvent(stop_);
         for (auto& t : threads_) t.join();
@@ -106,6 +123,7 @@ private:
             }
             if (wasMissing) SetEvent(changed_);  // the folder (back) again: its clips too
             wasMissing = false;
+            if (IsRemote(folder)) polling_ = true;  // (a network drive reconnected)
             alignas(DWORD) uint8_t buffer[16 * 1024];
             OVERLAPPED ov{};
             ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -113,7 +131,15 @@ private:
                 ResetEvent(ov.hEvent);
                 const DWORD filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
                                      FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
-                if (!ReadDirectoryChangesW(dir, buffer, sizeof buffer, TRUE, filter, nullptr, &ov, nullptr)) break;
+                if (!ReadDirectoryChangesW(dir, buffer, sizeof buffer, TRUE, filter, nullptr, &ov, nullptr)) {
+                    // Windows won't watch it (some network or virtual file systems): looked at
+                    // every 30 seconds instead.
+                    polling_ = true;
+                    CloseHandle(ov.hEvent);
+                    CloseHandle(dir);
+                    WaitForSingleObject(stop_, INFINITE);
+                    return;
+                }
                 HANDLE wait[2] = {stop_, ov.hEvent};
                 if (WaitForMultipleObjects(2, wait, FALSE, INFINITE) == WAIT_OBJECT_0) {
                     CancelIoEx(dir, &ov);
@@ -139,8 +165,9 @@ private:
         HANDLE wait[3] = {stop_, changed_, rescanNow_};
         const DWORD count = rescanNow_ ? 3 : 2;
         for (;;) {
-            const DWORD w = WaitForMultipleObjects(count, wait, FALSE, INFINITE);
+            const DWORD w = WaitForMultipleObjects(count, wait, FALSE, kPollMs);
             if (w == WAIT_OBJECT_0) return;
+            if (w == WAIT_TIMEOUT && !polling_) continue;  // only folders that need it are polled
             if (w == WAIT_OBJECT_0 + 1) {
                 // Until the folders have been quiet for 2 seconds (a copy in progress keeps them busy).
                 for (;;) {
@@ -160,6 +187,7 @@ private:
 
     Mounter& owner_;
     HANDLE stop_ = nullptr, changed_ = nullptr, rescanNow_ = nullptr;
+    std::atomic<bool> polling_{false};
     std::vector<std::thread> threads_;
 };
 
@@ -216,6 +244,8 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
     }
     // The rescan thread always runs (for `mlvdrive rescan`); the folder watchers with `watch` on.
     watcher_ = std::make_unique<Watcher>(*this, s.folders, s.watch, mountPoint);
+    std::lock_guard<std::mutex> lock(mutex_);
+    info_.polling = watcher_->polling();
     return true;
 }
 

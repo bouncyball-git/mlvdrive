@@ -291,8 +291,12 @@ in Resolve.
      cache's key; index numbers), a changed or removed clip's frames are forgotten. Watching
      (`watch = true`, `--no-watch`): a thread per folder on ReadDirectoryChangesW (subtree), a
      missing folder retried every 5 s; a rescan 2 s after the last change (a copy in progress
-     waits); `mlvdrive rescan M:` (named event, also for the tray's drive) and the tray's
-     "Rescan the folders" at once. Checked: a clip copied in appears 2 s after, verified; a
+     waits). Folders on a network drive or UNC path, or that Windows won't watch, are also
+     rescanned every 30 s (SMB notifications are unreliable); local ones not (sleeping disks).
+     `mlvdrive rescan M:` (named event, also for the tray's drive) at once; the tray's "Rescan
+     the folders" only shows with watching off. (Checked: a \\localhost\G$ path is seen as
+     network and polled; its changes still came by notification in 2.1 s. The 30 s timer itself
+     wasn't seen firing: no server without notifications to test against.) Checked: a clip copied in appears 2 s after, verified; a
      clip replaced by other footage under the same name updates (124 -> 542 frames, frame 300
      verified) while a handle opened before keeps reading; a deleted clip disappears; listings
      are fresh after each change.
