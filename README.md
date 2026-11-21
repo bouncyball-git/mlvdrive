@@ -17,14 +17,17 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 ## Mounting
 
 ```
-mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--cache=MB] [--read-ahead=N] [--debug]
+mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--timecode=time|count]
+               [--cache=MB] [--read-ahead=N] [--debug]
 mlvdrive unmount M:
 ```
 
 Every MLV clip under the folder (subfolders included) shows as a folder of DNG files,
-`NAME\NAME_000000.dng` onward, made when they are read. Without a drive letter the next free one
-from Z: down is used. Ctrl+C (or `mlvdrive unmount`) unmounts. WinFsp must be installed where it
-runs.
+`NAME\NAME_000000.dng` onward, made when they are read, and `NAME\NAME.wav` when the clip has
+audio (Broadcast WAVE, lined up with the first frame). The DNG timecode and the WAV's time
+reference are the time of day the clip was recorded (`--timecode=count`: from 00:00:00:00), so
+editors can sync the audio by timecode. Without a drive letter the next free one from Z: down is
+used. Ctrl+C (or `mlvdrive unmount`) unmounts. WinFsp must be installed where it runs.
 
 Frames read in order are made ahead on every CPU (`--read-ahead`, default one per CPU, 0 off) and
 kept in a cache (`--cache`, default 512 MB).
@@ -37,8 +40,11 @@ mlvdrive_cli dng   <clip.MLV> <frame> <out.dng>   one frame as a DNG
 mlvdrive_cli check <clip.MLV> <frame> <file.dng>  a DNG read back and compared with the frame
 mlvdrive_cli bench <clip.MLV> [frames]            ms a frame per stage, frames/s on every thread
     --dng=16|packed|lj92|pass   DNG format (default 16-bit)    --no-fix   no raw corrections
+mlvdrive_cli wav   <clip.MLV> <out.wav>           the clip's audio, as the drive shows it
+    --timecode=time|count (dng, wav)   timecode: time of day (default) or from 00:00:00:00
 mlvdrive_cli selftest <clip.MLV>                  every frame: fast decoder and vector corrections
-                                                  against the original code, value for value
+                                                  against the original code, value for value;
+                                                  the audio read in pieces against read whole
 mlvdrive_cli read  <folder>                       reads a mounted clip's DNGs in order: frames/s
     --threads=N  readers (default 1)   --passes=N (default 2)   --buffered  through Windows' cache
 ```

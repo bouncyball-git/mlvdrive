@@ -1,6 +1,7 @@
 // The drive's contents: the MLV clips found under a folder, each shown as a folder of DNG files.
 //
-//   E:\mlv\M21-1642.MLV         ->  \M21-1642\M21-1642_000000.dng ... M21-1642_000260.dng
+//   E:\mlv\M21-1642.MLV         ->  \M21-1642\M21-1642_000000.dng ... M21-1642_000260.dng,
+//                                   \M21-1642\M21-1642.wav (if it has audio)
 //   E:\mlv\day2\M22-0901.MLV    ->  \day2\M22-0901\M22-0901_000000.dng ...
 //
 // Subfolders holding clips are kept; everything else in the source folder is left out. Every
@@ -10,6 +11,7 @@
 
 #include "dng/dng_writer.h"
 #include "mlv/clip.h"
+#include "mlv/wav.h"
 #include "raw/rawfix.h"
 
 #include <cstdint>
@@ -27,8 +29,11 @@ struct ClipEntry {
     std::unique_ptr<mlv::Clip> clip;
     std::unique_ptr<raw::Fixer> fixer;
     std::unique_ptr<dng::Writer> writer;
+    mlv::WavLayout wav;  // its audio as a WAV file (empty header: none)
     uint64_t time = 0;  // when the clip was recorded (or the file's date)
-    uint64_t id = 0;    // index numbers: the folder's; frame N's file is id + 1 + N
+    uint64_t id = 0;    // index numbers: the folder's; frame N's file is id + 1 + N, the WAV's
+                        // id + 1 + frame count
+    bool hasWav() const { return !wav.header.empty(); }
 };
 
 struct Dir {
@@ -41,8 +46,8 @@ struct Dir {
 
 // What a path names.
 struct Node {
-    enum Kind { None, Directory, Frame } kind = None;
-    const Dir* dir = nullptr;   // Directory: the folder; Frame: its clip's folder
+    enum Kind { None, Directory, Frame, Audio } kind = None;
+    const Dir* dir = nullptr;   // Directory: the folder; Frame, Audio: its clip's folder
     uint32_t frame = 0;         // Frame: the frame index
 };
 
@@ -66,8 +71,9 @@ public:
     // A path as WinFsp passes it ("\M21-1642\M21-1642_000012.dng"; "\" is the root).
     Node find(const wchar_t* path) const;
 
-    // A frame's file name ("M21-1642_000012.dng").
+    // A frame's file name ("M21-1642_000012.dng"), the audio's ("M21-1642.wav").
     static std::wstring frameName(const ClipEntry& clip, uint32_t frame);
+    static std::wstring wavName(const ClipEntry& clip) { return clip.name + L".wav"; }
 
 private:
     Dir root_;

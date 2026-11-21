@@ -27,6 +27,9 @@ enum class Output {
     PassThrough,     // the clip's data as recorded: no raw fixes; the size varies
 };
 
+// The TimeCodes tag: the frame number from the start of recording (00:00:00:00), or the time of
+// day the recording started (RTCI) plus the frame number, counted at the rounded frame rate
+// (24 for 23.976, non-drop) as MLV-App does. Without RTCI, time of day falls back to the count.
 enum class Timecode { FrameCount, TimeOfDay };
 
 struct Options {
@@ -38,7 +41,7 @@ struct Options {
     int hStretchDen = 1;
     bool customWhiteBalance = false;
     color::Vec3 wbMultipliers{1, 1, 1};  // with customWhiteBalance: AsShotNeutral = 1 / these
-    Timecode timecode = Timecode::FrameCount;
+    Timecode timecode = Timecode::TimeOfDay;
 };
 
 class Writer {
@@ -74,12 +77,18 @@ public:
     // Whether the output really is pass-through (a clip with a linearisation curve can't be).
     Output effectiveOutput() const { return output_; }
 
+    // The FrameRate tag (the option, else the clip's), and the frame count the TimeCodes tag of
+    // a frame holds (its timecode in frames at the rounded rate): for audio to line up with.
+    double frameRate() const;
+    int64_t timecodeFrame(uint32_t frameIndex) const;
+
 private:
     // The image of a frame (not for Uncompressed16, which renderFrame() decodes in place).
     bool encodeImage(uint32_t frameIndex, Scratch& s, const uint8_t** image, size_t* imageBytes, bool* compressed,
                      std::string* error) const;
     void buildHeader(uint32_t frameIndex, size_t imageBytes, bool compressed, int bitsPerSample,
                      std::vector<uint8_t>& out) const;
+    void frameRateRational(int32_t out[2]) const;
 
     const mlv::Clip& clip_;
     Options options_;

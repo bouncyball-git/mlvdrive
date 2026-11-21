@@ -277,11 +277,8 @@ void Writer::buildHeader(uint32_t frameIndex, size_t imageBytes, bool compressed
     const int32_t defaultScale[4] = {hNum, hDen, stretchNum, stretchDen};
 
     // --- Frame rate ---
-    int32_t frameRate[2] = {int32_t(c.mlvi.sourceFpsNom), int32_t(c.mlvi.sourceFpsDenom ? c.mlvi.sourceFpsDenom : 1)};
-    if (options_.fps > 0) {
-        frameRate[0] = int32_t(std::lround(options_.fps * 1000));
-        frameRate[1] = 1000;
-    }
+    int32_t frameRate[2];
+    frameRateRational(frameRate);
     const double fps = double(frameRate[0]) / frameRate[1];
 
     // --- White balance ---
@@ -297,14 +294,9 @@ void Writer::buildHeader(uint32_t frameIndex, size_t imageBytes, bool compressed
     }
 
     // --- Timecode ---
-    int64_t tcFrame = c.frame(frameIndex).frameNumber;
     const int64_t when = FrameTime(c, frameIndex);
-    if (options_.timecode == Timecode::TimeOfDay && when >= 0 && fps > 0) {
-        const int64_t secondOfDay = c.rtci.tm_hour * 3600 + c.rtci.tm_min * 60 + c.rtci.tm_sec;
-        tcFrame = int64_t(std::llround(secondOfDay * std::round(fps))) + c.frame(frameIndex).frameNumber;
-    }
     uint8_t timecode[8];
-    TimecodeBytes(fps, tcFrame, timecode);
+    TimecodeBytes(fps, timecodeFrame(frameIndex), timecode);
 
     const uint32_t cfa = c.cfaPattern();
     const uint8_t cfaBytes[4] = {uint8_t(cfa), uint8_t(cfa >> 8), uint8_t(cfa >> 16), uint8_t(cfa >> 24)};
@@ -475,6 +467,32 @@ bool Writer::renderFrame(uint32_t frameIndex, std::vector<uint8_t>& out, Scratch
     std::memcpy(out.data(), s.header.data(), s.header.size());
     std::memcpy(out.data() + s.header.size(), image, imageBytes);
     return true;
+}
+
+void Writer::frameRateRational(int32_t out[2]) const {
+    out[0] = int32_t(clip_.mlvi.sourceFpsNom);
+    out[1] = int32_t(clip_.mlvi.sourceFpsDenom ? clip_.mlvi.sourceFpsDenom : 1);
+    if (options_.fps > 0) {
+        out[0] = int32_t(std::lround(options_.fps * 1000));
+        out[1] = 1000;
+    }
+}
+
+double Writer::frameRate() const {
+    int32_t r[2];
+    frameRateRational(r);
+    return double(r[0]) / r[1];
+}
+
+int64_t Writer::timecodeFrame(uint32_t frameIndex) const {
+    const mlv::Clip& c = clip_;
+    const double fps = frameRate();
+    int64_t tcFrame = c.frame(frameIndex).frameNumber;
+    if (options_.timecode == Timecode::TimeOfDay && FrameTime(c, frameIndex) >= 0 && fps > 0) {
+        const int64_t secondOfDay = c.rtci.tm_hour * 3600 + c.rtci.tm_min * 60 + c.rtci.tm_sec;
+        tcFrame = int64_t(std::llround(secondOfDay * std::round(fps))) + c.frame(frameIndex).frameNumber;
+    }
+    return tcFrame;
 }
 
 bool Writer::renderHeader(uint32_t frameIndex, std::vector<uint8_t>& out) const {

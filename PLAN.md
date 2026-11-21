@@ -59,7 +59,7 @@ byte):
 | From | To | What it is |
 |---|---|---|
 | `src/dng/dng_writer.{h,cpp}` | `src/dng/` | **copied (milestone 2)**: MLV-App's DNG tag set in C++ (matrices, as-shot neutral, timecode, frame rate, reel name, pixel aspect, EXIF), packed / LJ92 / pass-through output. Added here: 16-bit output, the whole DNG in memory, sizes known per clip |
-| `src/mlv/wav.{h,cpp}` | `src/mlv/` | Broadcast WAVE with bext/iXML (milestone 5) |
+| `src/mlv/wav.{h,cpp}` | `src/mlv/` | **copied (milestone 5)**: Broadcast WAVE with bext/iXML. Changed here: the header built alone (fixed size per clip), the audio read by range |
 
 From `D:\devel\MLV-App`: `src/mlv/llrawproc/dualiso.c` for dual ISO (milestone 6); `darkframe.c`,
 `patternnoise.c` as optional extras.
@@ -195,9 +195,21 @@ in Resolve.
    - Not done: WinFsp tuning; decoding one frame on several threads (Huffman
      resynchronisation: ~4-5x lower latency per frame, no throughput gain). Worth measuring on a
      UHD / 5.7K clip first.
-5. **Audio + timecode**: `<name>.wav` (BWF with the clip's timecode, mlvtoolbox `wav.cpp`),
-   DNG TimeCodes as time of day (the writer has it: `Timecode::TimeOfDay`), so Resolve syncs
-   audio automatically.
+5. **Audio + timecode** (done; Resolve's automatic sync to check later):
+   - `NAME.wav` beside the DNGs when the clip has audio: Broadcast WAVE (bext, iXML) from
+     mlvtoolbox's `wav.cpp`. Its size is known at mount (header fixed per clip + the audio for
+     the frames' duration at the recorded rate); reads come from just the audio blocks they
+     need (`Clip::readSyncedAudioRange`, `syncedAudioBytes`: readSyncedAudio's arithmetic
+     without reading), silence where the recording runs out.
+   - Timecode: time of day by default (`--timecode=time|count`, CLI and mount): DNG TimeCodes =
+     RTCI start time + frame number, counted at round(fps) (24 for 23.976, non-drop); the WAV's
+     bext TimeReference = frame 0's timecode frame x rate / fps (MLV-App's formula), so the two
+     mark the same moment. `Writer::timecodeFrame`, `frameRate` give the numbers.
+   - `mlvdrive_cli wav <clip> out.wav` writes the drive's WAV; `selftest` also compares the
+     audio read in pieces with it read whole.
+   - Checked on the test clip: audio 10.886 s = 261 frames at 23.976; frame 0 16:42:59:00,
+     frame 260 16:43:09:20; TimeReference 2,891,483,483 = frame 1,444,296 = 16:42:59:00;
+     ffprobe / exiftool read it; the drive's WAV is byte-identical to the CLI's, in any range.
 6. **Dual ISO** (MLV-App `dualiso.c`), then packed / LJ92 DNG on the drive (see above).
 7. **Usability**:
    - Install script (copy exe, Start Menu shortcut).

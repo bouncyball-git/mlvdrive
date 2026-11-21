@@ -732,4 +732,68 @@ bool Clip::readSyncedAudio(std::vector<uint8_t>& pcm, std::string* error) const 
     return true;
 }
 
+const std::vector<uint64_t>& Clip::audioStarts() const {
+    std::call_once(audioStartsOnce_, [this] {
+        audioStarts_.reserve(audio_.size() + 1);
+        uint64_t at = 0;
+        for (const auto& a : audio_) {
+            audioStarts_.push_back(at);
+            at += a.dataSize;
+        }
+        audioStarts_.push_back(at);
+    });
+    return audioStarts_;
+}
+
+// The same arithmetic as readSyncedAudio, without reading the audio.
+Clip::AudioSync Clip::audioSync() const {
+    AudioSync s;
+    if (!hasAudio()) return s;
+    s.total = audioStarts().back();
+    const uint64_t sampleSize = uint64_t(wavi.channels) * (wavi.bitsPerSample / 8);
+    if (sampleSize == 0 || wavi.samplingRate == 0) return s;
+    const uint64_t blockAlign = sampleSize * 1024;
+    const double bytesPerMicrosecond = double(wavi.samplingRate) * double(sampleSize) / 1000000.0;
+    const int64_t sync = int64_t((double(frames_[0].timestamp) - double(audio_[0].timestamp)) * bytesPerMicrosecond);
+    if (sync >= 0) s.drop = uint64_t(sync) - uint64_t(sync) % sampleSize;
+    else s.pad = uint64_t(-sync) - uint64_t(-sync) % sampleSize;
+    s.drop = std::min(s.drop, s.total);
+    const uint64_t synced = s.total - s.drop + s.pad;
+    const uint64_t syncedAligned = synced - synced % blockAlign + blockAlign;
+    const double seconds = fps() > 0 ? double(frames_.size()) / fps() : 0.0;
+    const uint64_t theoretic = uint64_t(double(wavi.samplingRate) * double(sampleSize) * seconds);
+    const uint64_t theoreticAligned = theoretic - theoretic % blockAlign + blockAlign;
+    s.size = std::min(theoreticAligned, syncedAligned);
+    return s;
+}
+
+bool Clip::readSyncedAudioRange(uint64_t offset, size_t n, uint8_t* out, std::string* error) const {
+    std::memset(out, 0, n);
+    const AudioSync s = audioSync();
+    // Synced byte o is recorded byte o - pad + drop: silence before `pad`, nothing past `size`
+    // or past the recording.
+    const uint64_t begin = std::max(offset, s.pad);
+    const uint64_t end = std::min(offset + n, s.size);
+    if (begin >= end) return true;
+    uint64_t from = begin - s.pad + s.drop;
+    const uint64_t to = std::min(end - s.pad + s.drop, s.total);
+    if (from >= to) return true;
+    uint8_t* dst = out + (begin - offset);
+    const auto& starts = audioStarts();
+    size_t i = size_t(std::upper_bound(starts.begin(), starts.end(), from) - starts.begin()) - 1;
+    while (from < to) {
+        const AudioIndex& a = audio_[i];
+        const uint64_t within = from - starts[i];
+        const uint64_t take = std::min<uint64_t>(a.dataSize - within, to - from);
+        if (!chunks_[a.chunk]->readAt(a.dataOffset + within, dst, size_t(take))) {
+            if (error) *error = "Audio read error";
+            return false;
+        }
+        dst += take;
+        from += take;
+        ++i;
+    }
+    return true;
+}
+
 }  // namespace mlv

@@ -64,6 +64,13 @@ struct Drive::Impl {
             info->FileAttributes = FILE_ATTRIBUTE_DIRECTORY;
             info->IndexNumber = n.dir->id;
             info->CreationTime = info->LastAccessTime = info->LastWriteTime = info->ChangeTime = n.dir->time;
+        } else if (n.kind == vfs::Node::Audio) {
+            const vfs::ClipEntry& c = *n.dir->clip;
+            info->FileAttributes = FILE_ATTRIBUTE_READONLY;
+            info->FileSize = c.wav.size();
+            info->AllocationSize = roundUp(info->FileSize);
+            info->IndexNumber = c.id + 1 + c.clip->frameCount();
+            info->CreationTime = info->LastAccessTime = info->LastWriteTime = info->ChangeTime = c.time;
         } else {
             const vfs::ClipEntry& c = *n.dir->clip;
             info->FileAttributes = FILE_ATTRIBUTE_READONLY;
@@ -128,7 +135,7 @@ struct Drive::Impl {
         Impl* self = of(fs);
         vfs::Node n = self->tree.find(name);
         if (n.kind == vfs::Node::None) return STATUS_OBJECT_NAME_NOT_FOUND;
-        if (n.kind == vfs::Node::Frame && (createOptions & FILE_DIRECTORY_FILE)) return STATUS_NOT_A_DIRECTORY;
+        if (n.kind != vfs::Node::Directory && (createOptions & FILE_DIRECTORY_FILE)) return STATUS_NOT_A_DIRECTORY;
         if (n.kind == vfs::Node::Directory && (createOptions & FILE_NON_DIRECTORY_FILE)) return STATUS_FILE_IS_A_DIRECTORY;
         auto* ctx = new (std::nothrow) FileContext;
         if (!ctx) return STATUS_INSUFFICIENT_RESOURCES;
@@ -166,6 +173,20 @@ struct Drive::Impl {
         Impl* self = of(fs);
         auto* ctx = static_cast<FileContext*>(context);
         *transferred = 0;
+        if (ctx->node.kind == vfs::Node::Audio) {
+            // Straight from the clip's audio blocks (Windows' cache keeps what is read again).
+            const vfs::ClipEntry& c = *ctx->node.dir->clip;
+            const uint64_t size = c.wav.size();
+            if (offset >= size) return STATUS_END_OF_FILE;
+            const size_t n = size_t(std::min<uint64_t>(size - offset, length));
+            std::string error;
+            if (!mlv::readWav(*c.clip, c.wav, offset, n, static_cast<uint8_t*>(buffer), &error)) {
+                std::fprintf(stderr, "%s audio: %s\n", narrow(c.name).c_str(), error.c_str());
+                return STATUS_UNEXPECTED_IO_ERROR;
+            }
+            *transferred = ULONG(n);
+            return STATUS_SUCCESS;
+        }
         if (ctx->node.kind != vfs::Node::Frame) return STATUS_INVALID_DEVICE_REQUEST;
         const vfs::ClipEntry& c = *ctx->node.dir->clip;
         const uint64_t size = c.writer->fileSize();
@@ -230,6 +251,13 @@ struct Drive::Impl {
                     f.frame = i;
                     self->fileInfo(f, &info);
                     ok = addEntry(ctx, vfs::Tree::frameName(*dir->clip, i), info, &result);
+                }
+                if (ok && dir->clip->hasWav()) {
+                    vfs::Node a;
+                    a.kind = vfs::Node::Audio;
+                    a.dir = dir;
+                    self->fileInfo(a, &info);
+                    ok = addEntry(ctx, vfs::Tree::wavName(*dir->clip), info, &result);
                 }
             } else {
                 vfs::Node d;

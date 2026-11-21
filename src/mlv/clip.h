@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -123,8 +124,23 @@ public:
     // The audio as 16-bit PCM, aligned with the first video frame (MLV-App's readMlvAudioData()):
     // silence added in front, or audio before the first frame dropped. Empty if there is none.
     bool readSyncedAudio(std::vector<uint8_t>& pcm, std::string* error) const;
+    // Its length, without reading it.
+    uint64_t syncedAudioBytes() const { return audioSync().size; }
+    // `n` bytes of it from `offset` (zeros past its end), read from just the blocks they come
+    // from. Thread-safe.
+    bool readSyncedAudioRange(uint64_t offset, size_t n, uint8_t* out, std::string* error) const;
 
 private:
+    // How the recorded audio lines up with the first frame (readSyncedAudio's arithmetic): the
+    // recorded bytes, those dropped from the start, the silence added in front, the result's length.
+    struct AudioSync {
+        uint64_t total = 0, drop = 0, pad = 0, size = 0;
+    };
+    AudioSync audioSync() const;
+    const std::vector<uint64_t>& audioStarts() const;  // where each audio block starts in the recorded audio, + the total
+    mutable std::once_flag audioStartsOnce_;
+    mutable std::vector<uint64_t> audioStarts_;
+
     Clip() = default;
     bool load(std::string* error);
     bool scanChunk(int chunk, std::string* error);

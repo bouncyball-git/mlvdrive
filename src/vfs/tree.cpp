@@ -158,6 +158,9 @@ bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
             if (!e->time) e->time = fileTime(paths[i]);
             if (options.fix) e->fixer = std::make_unique<raw::Fixer>(*clip, options.fixes);
             e->writer = std::make_unique<dng::Writer>(*clip, options.dng, e->fixer.get());
+            // The audio, its time reference on frame 0's DNG timecode.
+            e->wav = mlv::wavLayout(*clip, mlv::wavTimeReference(*clip, e->writer->timecodeFrame(0),
+                                                                  e->writer->frameRate()));
             e->clip = std::move(clip);
             opened[i] = std::move(e);
         }
@@ -204,8 +207,8 @@ bool Tree::build(const std::wstring& sourceFolder, const BuildOptions& options,
         d->clip = e;
         e->id = nextId;
         d->id = nextId;
-        nextId += 1 + e->clip->frameCount();
-        totalBytes_ += e->writer->fileSize() * e->clip->frameCount();
+        nextId += 2 + e->clip->frameCount();
+        totalBytes_ += e->writer->fileSize() * e->clip->frameCount() + e->wav.size();
         clips_.push_back(std::move(opened[i]));
     }
     sortTree(&root_);
@@ -226,9 +229,17 @@ Node Tree::find(const wchar_t* path) const {
         while (*rest == L'\\') ++rest;
 
         if (dir->clip) {
-            // A frame: NAME_000123.dng, the last part of the path.
+            // A frame: NAME_000123.dng, or the audio: NAME.wav; the last part of the path.
             if (*rest) return n;
             const ClipEntry& c = *dir->clip;
+            if (c.hasWav()) {
+                const std::wstring wav = wavName(c);
+                if (compareNames(p, len, wav.data(), wav.size()) == 0) {
+                    n.kind = Node::Audio;
+                    n.dir = dir;
+                    return n;
+                }
+            }
             const size_t prefix = c.name.size() + 1;
             if (len < prefix + 4 + 1 || compareNames(p, c.name.size(), c.name.data(), c.name.size()) != 0 ||
                 p[c.name.size()] != L'_')

@@ -6,20 +6,25 @@
 //                                                       frame decoded and corrected now
 //   mlvdrive_cli bench <clip.MLV> [frames]              ms a frame per stage, then frames/s on
 //                                                       every thread
+//   mlvdrive_cli wav   <clip.MLV> <out.wav>             the clip's audio as the drive shows it
 //   mlvdrive_cli selftest <clip.MLV>                    every frame: the fast decoder against the
 //                                                       original one, the vector raw corrections
-//                                                       against the scalar ones (value for value)
+//                                                       against the scalar ones (value for value);
+//                                                       the audio read in pieces against whole
 //   mlvdrive_cli read  <folder>                         reads every .dng in a folder (a clip's
 //                                                       folder on the drive) in name order:
 //                                                       frames/s, MB/s, ms a file
 //
 // Options (dng, check, bench): --dng=16|packed|lj92|pass  (default 16), --no-fix (no raw corrections)
+// Options (dng, wav): --timecode=time|count  (DNG TimeCodes / WAV time reference: time of day, the
+//                     default, or frames from the start)
 // Options (read): --threads=N readers at once (default 1), --passes=N (default 2), --buffered
 //                 (through Windows' file cache; by default unbuffered, what the drive itself gives)
 #include "dng/dng_writer.h"
 #include "liblj92/lj92.h"
 #include "mlv/clip.h"
 #include "mlv/color.h"
+#include "mlv/wav.h"
 #include "parallel.h"
 #include "raw/rawfix.h"
 #include "util/file.h"
@@ -56,6 +61,7 @@ int usage() {
                  "       mlvdrive_cli dng   <clip.MLV> <frame> <out.dng> [--dng=16|packed|lj92|pass] [--no-fix]\n"
                  "       mlvdrive_cli check <clip.MLV> <frame> <file.dng> [--no-fix]\n"
                  "       mlvdrive_cli bench <clip.MLV> [frames] [--dng=16|packed|lj92|pass] [--no-fix]\n"
+                 "       mlvdrive_cli wav   <clip.MLV> <out.wav> [--timecode=time|count]\n"
                  "       mlvdrive_cli selftest <clip.MLV>\n"
                  "       mlvdrive_cli read  <folder> [--threads=N] [--passes=N] [--buffered]\n");
     return 2;
@@ -68,6 +74,7 @@ struct Args {
     int threads = 1;
     int passes = 2;
     bool buffered = false;
+    dng::Timecode timecode = dng::Timecode::TimeOfDay;
 };
 
 bool parseArgs(int argc, char** argv, Args* a) {
@@ -88,6 +95,10 @@ bool parseArgs(int argc, char** argv, Args* a) {
             a->passes = std::max(1, std::atoi(s.c_str() + 9));
         } else if (s == "--buffered") {
             a->buffered = true;
+        } else if (s == "--timecode=time") {
+            a->timecode = dng::Timecode::TimeOfDay;
+        } else if (s == "--timecode=count") {
+            a->timecode = dng::Timecode::FrameCount;
         } else if (s.rfind("--", 0) == 0) {
             return false;
         } else {
@@ -212,6 +223,7 @@ int writeDng(const Args& a) {
     if (a.fix) fixer = std::make_unique<raw::Fixer>(*clip, raw::FixSettings{});
     dng::Options options;
     options.output = a.output;
+    options.timecode = a.timecode;
     dng::Writer writer(*clip, options, fixer.get());
     dng::Writer::Scratch scratch;
     std::string error;
@@ -479,6 +491,35 @@ int bench(const Args& a) {
     return 0;
 }
 
+// --- wav ---
+
+int writeWavFile(const Args& a) {
+    if (a.positional.size() != 2) return usage();
+    auto clip = openClip(a.positional[0]);
+    if (!clip) return 1;
+    if (!clip->hasAudio()) {
+        std::fprintf(stderr, "%s has no audio\n", a.positional[0].c_str());
+        return 1;
+    }
+    dng::Options options;
+    options.timecode = a.timecode;
+    dng::Writer writer(*clip, options, nullptr);
+    const mlv::WavLayout wav =
+        mlv::wavLayout(*clip, mlv::wavTimeReference(*clip, writer.timecodeFrame(0), writer.frameRate()));
+    std::vector<uint8_t> bytes(size_t(wav.size()));
+    std::string error;
+    if (!mlv::readWav(*clip, wav, 0, bytes.size(), bytes.data(), &error) ||
+        !util::writeFile(a.positional[1], bytes.data(), bytes.size(), nullptr, 0, &error)) {
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return 1;
+    }
+    const double seconds = double(wav.dataBytes) / (clip->wavi.samplingRate * clip->wavi.channels * 2.0);
+    std::printf("%s: %u ch, %u Hz, %.3f s (the frames: %.3f s), %zu bytes (header %zu); timecode frame %lld\n",
+                a.positional[1].c_str(), clip->wavi.channels, clip->wavi.samplingRate, seconds,
+                clip->frameCount() / clip->fps(), bytes.size(), wav.header.size(), (long long)writer.timecodeFrame(0));
+    return 0;
+}
+
 // --- selftest ---
 
 int selftest(const Args& a) {
@@ -520,6 +561,28 @@ int selftest(const Args& a) {
         raw::setSimd(true);
         if (fast != fixedRef && fixDiffer++ == 0) std::printf("frame %u: the raw corrections differ\n", f);
     }
+    // The audio: read whole (the reference) and in odd-sized pieces, from the blocks they come from.
+    uint32_t audioDiffer = 0;
+    std::vector<uint8_t> whole, pieces;
+    if (!clip->readSyncedAudio(whole, &error)) {
+        std::fprintf(stderr, "audio: %s\n", error.c_str());
+        return 1;
+    }
+    const uint64_t audioBytes = clip->syncedAudioBytes();
+    if (audioBytes != whole.size()) audioDiffer = 1;
+    pieces.assign(size_t(audioBytes) + 5000, 0xAB);  // past the end too: must read as zeros
+    for (size_t at = 0; at < pieces.size();) {
+        const size_t n = std::min<size_t>(7919, pieces.size() - at);
+        if (!clip->readSyncedAudioRange(at, n, pieces.data() + at, &error)) {
+            std::fprintf(stderr, "audio: %s\n", error.c_str());
+            return 1;
+        }
+        at += n;
+    }
+    if (!std::equal(whole.begin(), whole.end(), pieces.begin()) ||
+        std::any_of(pieces.begin() + ptrdiff_t(whole.size()), pieces.end(), [](uint8_t b) { return b != 0; }))
+        audioDiffer = 1;
+
     const uint32_t n = clip->frameCount();
     std::printf("%s, %u frames (%s)\n", clip->name().c_str(), n,
                 fixVector.active() ? "raw corrections on" : "no corrections needed");
@@ -527,7 +590,8 @@ int selftest(const Args& a) {
                 refMs / n);
     std::printf("corrections: %u frames differ; vector %.2f ms a frame, scalar %.2f\n", fixDiffer, vecMs / n,
                 scalarMs / n);
-    return decodeDiffer || fixDiffer ? 1 : 0;
+    std::printf("audio:       %s (%zu bytes)\n", audioDiffer ? "DIFFERS" : "the same in pieces as whole", whole.size());
+    return decodeDiffer || fixDiffer || audioDiffer ? 1 : 0;
 }
 
 // --- read ---
@@ -648,6 +712,7 @@ int main(int argc, char** argv) {
     else if (cmd == "bench") rc = bench(a);
     else if (cmd == "read") rc = readFolder(a);
     else if (cmd == "selftest") rc = selftest(a);
+    else if (cmd == "wav") rc = writeWavFile(a);
     else return usage();
     par::shutdown();
     return rc;

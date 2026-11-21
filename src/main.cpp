@@ -1,7 +1,7 @@
 // mlvdrive: shows the MLV clips under a folder as a drive of CinemaDNG sequences.
 //
-//   mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--cache=MB] [--read-ahead=N]
-//                  [--debug]
+//   mlvdrive mount <MLV folder> [M:] [--dng=16|packed] [--no-fix] [--timecode=time|count]
+//                  [--cache=MB] [--read-ahead=N] [--debug]
 //   mlvdrive unmount <M:>
 //
 // mount runs until Ctrl+C, the console is closed or `mlvdrive unmount` is run, then unmounts.
@@ -56,6 +56,9 @@ int usage() {
                  "  --dng=16         16-bit uncompressed DNG (the default)\n"
                  "  --dng=packed     uncompressed, packed to the clip's bit depth (smaller)\n"
                  "  --no-fix         no raw corrections (stripes, focus and bad pixels)\n"
+                 "  --timecode=time  DNG timecode and WAV time reference: the time of day the clip was\n"
+                 "                   recorded (the default; clips line up by when they were shot)\n"
+                 "  --timecode=count the frames from the start of the clip (00:00:00:00)\n"
                  "  --cache=MB       frames kept made (default 512)\n"
                  "  --read-ahead=N   frames made ahead of the one read (default: one per CPU; 0: none)\n"
                  "  --debug          log every file system request\n"
@@ -101,6 +104,8 @@ int wmain(int argc, wchar_t** argv) {
         } else if (a == L"--dng=16") options.dng.output = dng::Output::Uncompressed16;
         else if (a == L"--dng=packed") options.dng.output = dng::Output::Uncompressed;
         else if (a == L"--no-fix") options.fix = false;
+        else if (a == L"--timecode=time") options.dng.timecode = dng::Timecode::TimeOfDay;
+        else if (a == L"--timecode=count") options.dng.timecode = dng::Timecode::FrameCount;
         else if (a == L"--debug") debug = true;
         else if (a.rfind(L"--", 0) == 0) return usage();
         else positional.push_back(a);
