@@ -11,7 +11,6 @@
 
 namespace mlv {
 
-constexpr uint16_t kVideoClassRaw = 0x01;
 constexpr uint16_t kVideoFlagJpeg2k = 0x10;
 constexpr uint16_t kVideoFlagLj92 = 0x20;
 constexpr uint16_t kVideoFlagDelta = 0x40;
@@ -34,7 +33,7 @@ struct FileHeader {  // MLVI
     uint16_t fileNum;
     uint16_t fileCount;
     uint32_t fileFlags;     // 1 = out-of-order data, 2 = dropped frames, 4 = single image, 8 = stopped by an error
-    uint16_t videoClass;    // kVideoClassRaw | flags
+    uint16_t videoClass;    // 1 (raw) | the kVideoFlag values
     uint16_t audioClass;    // 0 = none, 1 = WAV
     uint32_t videoFrameCount;
     uint32_t audioFrameCount;
@@ -171,26 +170,6 @@ struct IdentityBlock {  // IDNT
     char cameraName[32];
     uint32_t cameraModel;
     char cameraSerial[32];
-};
-
-struct DualIsoBlock {  // DISO
-    char type[4];
-    uint32_t blockSize;
-    uint64_t timestamp;
-    uint32_t dualMode;
-    uint32_t isoValue;
-};
-
-struct StyleBlock {  // STYL
-    char type[4];
-    uint32_t blockSize;
-    uint64_t timestamp;
-    uint32_t picStyleId;
-    int32_t contrast;
-    int32_t sharpness;
-    int32_t saturation;
-    int32_t colortone;
-    char picStyleName[16];
 };
 
 struct WhiteBalanceBlock {  // WBAL

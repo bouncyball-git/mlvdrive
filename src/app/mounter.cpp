@@ -2,6 +2,7 @@
 
 #include "fs/winfsp_fs.h"
 #include "raw/rawfix.h"
+#include "util/file.h"
 #include "vfs/tree.h"
 
 #include <algorithm>
@@ -47,22 +48,6 @@ std::wstring stopEventName(std::wstring mountPoint) {
 
 std::wstring rescanEventName(std::wstring mountPoint) {
     return L"Local\\MLVDrive-rescan-" + EventSuffix(std::move(mountPoint));
-}
-
-std::string narrow(const std::wstring& w) {
-    if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), n, nullptr, nullptr);
-    return s;
-}
-
-std::wstring widen(const std::string& s) {
-    if (s.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), nullptr, 0);
-    std::wstring w(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), int(s.size()), w.data(), n);
-    return w;
 }
 
 // Whether Windows may not report a folder's changes: on a network drive or a share (SMB
@@ -215,7 +200,7 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (tree->clipCount() == 0) {
         std::string where;
-        for (const auto& f : s.folders) where += (where.empty() ? "" : ", ") + narrow(f);
+        for (const auto& f : s.folders) where += (where.empty() ? "" : ", ") + util::narrow(f);
         if (error) *error = "no MLV clips in " + where;
         return false;
     }

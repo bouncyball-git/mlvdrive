@@ -7,7 +7,6 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <mutex>
 
 namespace mlv {
@@ -44,17 +43,10 @@ std::string TrimmedText(const char* data, size_t size) {
 
 }  // namespace
 
-std::unique_ptr<Clip> Clip::open(const std::string& utf8Path, std::string* error,
-                                 const std::function<void(double)>& progress, OpenMode mode) {
+std::unique_ptr<Clip> Clip::open(const std::string& utf8Path, std::string* error) {
     std::unique_ptr<Clip> clip(new Clip());
     clip->path_ = utf8Path;
-    clip->progress_ = progress;
-    clip->preview_ = mode == OpenMode::Preview;
-    clip->mode_ = mode;
-    const bool ok = clip->load(error);
-    clip->progress_ = nullptr;
-    if (!ok) return nullptr;
-    if (progress) progress(1.0);
+    if (!clip->load(error)) return nullptr;
     return clip;
 }
 
@@ -112,7 +104,6 @@ bool Clip::load(std::string* error) {
         return false;
     }
     chunks_.push_back(std::move(first));
-    chunkPaths_.push_back(path_);
 
     std::string ext = util::u8(util::u8(path_).extension());
     std::string lower = ext;
@@ -134,24 +125,14 @@ bool Clip::load(std::string* error) {
             auto chunk = std::make_unique<util::RandomAccessFile>();
             if (!chunk->open(name)) break;
             chunks_.push_back(std::move(chunk));
-            chunkPaths_.push_back(name);
         }
     }
 
-    // IndexFile mode: the index from the clip's index file, if it has a valid one.
-    fromIndexFile_ = mode_ == OpenMode::IndexFile && loadIndex();
-
-    scanTotal_ = 0;
-    for (const auto& c : chunks_) scanTotal_ += c->size();
-    scannedBefore_ = 0;
-    for (int i = 0; i < int(chunks_.size()) && !fromIndexFile_; ++i) {
-        if (preview_ && i > 0) break;  // the first frame is in the first chunk
-        if (i > 0) scannedBefore_ += chunks_[size_t(i - 1)]->size();
+    for (int i = 0; i < int(chunks_.size()); ++i) {
         if (!scanChunk(i, error)) {
             if (i == 0) return false;
             // A broken further chunk: keep what was read before it.
             chunks_.resize(size_t(i));
-            chunkPaths_.resize(size_t(i));
             break;
         }
     }
@@ -175,235 +156,11 @@ bool Clip::load(std::string* error) {
                      [](const FrameIndex& a, const FrameIndex& b) { return a.timestamp < b.timestamp; });
     std::stable_sort(audio_.begin(), audio_.end(),
                      [](const AudioIndex& a, const AudioIndex& b) { return a.timestamp < b.timestamp; });
-    if (mode_ == OpenMode::IndexFile && !fromIndexFile_) saveIndex();
     return true;
 }
 
-// --- Index files (OpenMode::IndexFile) ---------------------------------------------------------
-//
-// NAME.MIDX, little endian:
-//   "MIDX", u32 version (1), u32 chunk count, per chunk: u64 size, i64 modification time;
-//   u32 frame count, per frame: u64 dataOffset, u32 dataSize, u16 chunk, u32 frameNumber,
-//     u64 timestamp, u16 panPosX, u16 panPosY, u64 blockOffset;
-//   u32 audio count, per block: u64 dataOffset, u32 dataSize, u16 chunk, u64 timestamp;
-//   u32 metadata block count, per block: char[4] type, u16 chunk, u64 offset, u32 size, u64 timestamp;
-//   "MIDX" again (the file is whole).
-// The metadata itself is read again from the blocks listed (a few small reads).
-
-namespace {
-
-constexpr uint32_t kIndexVersion = 1;
-
-std::mutex& IndexFolderMutex() {
-    static std::mutex m;
-    return m;
-}
-std::string& IndexFolder() {
-    static std::string folder;
-    return folder;
-}
-
-int64_t ModifiedTime(const std::string& utf8Path) {
-    std::error_code ec;
-    auto t = std::filesystem::last_write_time(util::u8(utf8Path), ec);
-    return ec ? 0 : int64_t(t.time_since_epoch().count());
-}
-
-struct Writer {
-    std::vector<uint8_t> bytes;
-    template <typename T> void put(T v) {
-        const size_t at = bytes.size();
-        bytes.resize(at + sizeof v);
-        std::memcpy(bytes.data() + at, &v, sizeof v);
-    }
-    void put4(const char* s) { bytes.insert(bytes.end(), s, s + 4); }
-};
-
-struct Reader {
-    const std::vector<uint8_t>& bytes;
-    size_t at = 0;
-    bool ok = true;
-    template <typename T> T get() {
-        T v{};
-        if (at + sizeof v > bytes.size()) {
-            ok = false;
-            return v;
-        }
-        std::memcpy(&v, bytes.data() + at, sizeof v);
-        at += sizeof v;
-        return v;
-    }
-    bool is4(const char* s) {
-        if (at + 4 > bytes.size() || std::memcmp(bytes.data() + at, s, 4) != 0) return ok = false;
-        at += 4;
-        return true;
-    }
-    // A count of entries of `entryBytes` each that fits in what is left (else not ok).
-    uint32_t count(size_t entryBytes) {
-        const uint32_t n = get<uint32_t>();
-        if (ok && uint64_t(n) * entryBytes > bytes.size() - at) ok = false;
-        return ok ? n : 0;
-    }
-};
-
-bool ReadWholeFile(const std::string& utf8Path, std::vector<uint8_t>& out) {
-    std::ifstream f(util::u8(utf8Path), std::ios::binary);
-    if (!f) return false;
-    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    return !out.empty();
-}
-
-bool WriteWholeFile(const std::string& utf8Path, const std::vector<uint8_t>& bytes) {
-    std::ofstream f(util::u8(utf8Path), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size()));
-    f.close();
-    if (f.fail()) {
-        std::error_code ec;
-        std::filesystem::remove(util::u8(utf8Path), ec);  // not a half-written index
-        return false;
-    }
-    return true;
-}
-
-}  // namespace
-
-void Clip::setIndexFolder(const std::string& utf8Folder) {
-    std::lock_guard<std::mutex> lock(IndexFolderMutex());
-    IndexFolder() = utf8Folder;
-}
-
-std::string Clip::indexFileBeside() const {
-    std::filesystem::path p = util::u8(path_);
-    p.replace_extension(".MIDX");
-    return util::u8(p);
-}
-
-std::string Clip::indexFileInFolder() const {
-    std::string folder;
-    {
-        std::lock_guard<std::mutex> lock(IndexFolderMutex());
-        folder = IndexFolder();
-    }
-    if (folder.empty()) return {};
-    // Named after the clip and a hash of its full path (clips of the same name in other folders).
-    uint64_t hash = 1469598103934665603ull;
-    for (unsigned char c : path_) hash = (hash ^ c) * 1099511628211ull;
-    char tag[20];
-    std::snprintf(tag, sizeof tag, "%016llx", (unsigned long long)hash);
-    return util::u8(util::u8(folder) / util::u8(name() + "-" + tag + ".MIDX"));
-}
-
-bool Clip::loadIndex() {
-    for (const std::string& file : {indexFileBeside(), indexFileInFolder()}) {
-        std::vector<uint8_t> bytes;
-        if (file.empty() || !ReadWholeFile(file, bytes)) continue;
-        Reader r{bytes};
-        if (!r.is4("MIDX") || r.get<uint32_t>() != kIndexVersion) continue;
-        // The chunks as they were: same count, sizes and modification times.
-        const uint32_t chunks = r.count(16);
-        if (!r.ok || chunks != chunks_.size()) continue;
-        bool same = true;
-        for (uint32_t i = 0; i < chunks; ++i) {
-            const uint64_t size = r.get<uint64_t>();
-            const int64_t time = r.get<int64_t>();
-            same = same && size == chunks_[i]->size() && time == ModifiedTime(chunkPaths_[i]);
-        }
-        if (!r.ok || !same) continue;
-        std::vector<FrameIndex> frames(r.count(38));
-        for (auto& f : frames) {
-            f.dataOffset = r.get<uint64_t>();
-            f.dataSize = r.get<uint32_t>();
-            f.chunk = r.get<uint16_t>();
-            f.frameNumber = r.get<uint32_t>();
-            f.timestamp = r.get<uint64_t>();
-            f.panPosX = r.get<uint16_t>();
-            f.panPosY = r.get<uint16_t>();
-            f.blockOffset = r.get<uint64_t>();
-        }
-        std::vector<AudioIndex> audio(r.count(22));
-        for (auto& a : audio) {
-            a.dataOffset = r.get<uint64_t>();
-            a.dataSize = r.get<uint32_t>();
-            a.chunk = r.get<uint16_t>();
-            a.timestamp = r.get<uint64_t>();
-        }
-        std::vector<BlockRef> blocks(r.count(26));
-        for (auto& b : blocks) {
-            for (char& c : b.type) c = char(r.get<uint8_t>());
-            b.chunk = r.get<uint16_t>();
-            b.offset = r.get<uint64_t>();
-            b.size = r.get<uint32_t>();
-            b.timestamp = r.get<uint64_t>();
-        }
-        if (!r.is4("MIDX") || r.at != bytes.size() || frames.empty()) continue;
-        for (const auto& f : frames) same = same && f.chunk < chunks;
-        for (const auto& a : audio) same = same && a.chunk < chunks;
-        for (const auto& b : blocks) same = same && b.chunk < chunks;
-        if (!same) continue;
-
-        // The metadata: the file header, then every metadata block listed, read again.
-        if (!chunks_[0]->readAt(0, &mlvi, sizeof mlvi) || !Is(mlvi.magic, "MLVI")) continue;
-        for (const auto& b : blocks) {
-            BlockHeader block{};
-            if (chunks_[b.chunk]->readAt(b.offset, &block, sizeof block) && Is(block.type, b.type))
-                parseMetadata(*chunks_[b.chunk], b.offset, block);
-        }
-        frames_ = std::move(frames);
-        audio_ = std::move(audio);
-        blocks_ = std::move(blocks);
-        return true;
-    }
-    return false;
-}
-
-void Clip::saveIndex() const {
-    Writer w;
-    w.put4("MIDX");
-    w.put<uint32_t>(kIndexVersion);
-    w.put<uint32_t>(uint32_t(chunks_.size()));
-    for (size_t i = 0; i < chunks_.size(); ++i) {
-        w.put<uint64_t>(chunks_[i]->size());
-        w.put<int64_t>(ModifiedTime(chunkPaths_[i]));
-    }
-    w.put<uint32_t>(uint32_t(frames_.size()));
-    for (const auto& f : frames_) {
-        w.put<uint64_t>(f.dataOffset);
-        w.put<uint32_t>(f.dataSize);
-        w.put<uint16_t>(f.chunk);
-        w.put<uint32_t>(f.frameNumber);
-        w.put<uint64_t>(f.timestamp);
-        w.put<uint16_t>(f.panPosX);
-        w.put<uint16_t>(f.panPosY);
-        w.put<uint64_t>(f.blockOffset);
-    }
-    w.put<uint32_t>(uint32_t(audio_.size()));
-    for (const auto& a : audio_) {
-        w.put<uint64_t>(a.dataOffset);
-        w.put<uint32_t>(a.dataSize);
-        w.put<uint16_t>(a.chunk);
-        w.put<uint64_t>(a.timestamp);
-    }
-    w.put<uint32_t>(uint32_t(blocks_.size()));
-    for (const auto& b : blocks_) {
-        for (char c : b.type) w.put<uint8_t>(uint8_t(c));
-        w.put<uint16_t>(b.chunk);
-        w.put<uint64_t>(b.offset);
-        w.put<uint32_t>(b.size);
-        w.put<uint64_t>(b.timestamp);
-    }
-    w.put4("MIDX");
-    // Beside the clip; else (a read-only card) in the index folder.
-    if (WriteWholeFile(indexFileBeside(), w.bytes)) return;
-    const std::string other = indexFileInFolder();
-    if (other.empty()) return;
-    std::error_code ec;
-    std::filesystem::create_directories(util::u8(other).parent_path(), ec);
-    WriteWholeFile(other, w.bytes);
-}
-
-// A metadata block's fields (the first of EXPO, LENS, ELNS, WBAL, STYL, RTCI, CURV; the last of
-// the others; every VERS).
+// A metadata block's fields (the first of EXPO, LENS, ELNS, WBAL, RTCI, CURV; the last of RAWI,
+// RAWC, WAVI, IDNT).
 void Clip::parseMetadata(const util::RandomAccessFile& file, uint64_t start, const BlockHeader& block) {
     auto readBlock = [&](uint64_t at, uint32_t blockSize, void* out, size_t size) {
         std::memset(out, 0, size);
@@ -425,35 +182,17 @@ void Clip::parseMetadata(const util::RandomAccessFile& file, uint64_t start, con
         }
     } else if (Is(block.type, "ELNS")) {
         if (elnsName.empty() && block.size > sizeof(ExtendedLensBlock)) {
-            std::vector<char> text(block.size - sizeof(ExtendedLensBlock));
+            // A lens name: not more than a few hundred bytes (a damaged size isn't allocated).
+            std::vector<char> text(std::min<size_t>(block.size - sizeof(ExtendedLensBlock), 1024));
             if (file.readAt(start + sizeof(ExtendedLensBlock), text.data(), text.size()))
                 elnsName = TrimmedText(text.data(), text.size());
         }
     } else if (Is(block.type, "WBAL")) {
         if (wbal.type[0] == 0) readBlock(start, block.size, &wbal, sizeof wbal);
-    } else if (Is(block.type, "STYL")) {
-        if (styl.type[0] == 0) readBlock(start, block.size, &styl, sizeof styl);
     } else if (Is(block.type, "RTCI")) {
         if (rtci.type[0] == 0) readBlock(start, block.size, &rtci, sizeof rtci);
     } else if (Is(block.type, "IDNT")) {
         readBlock(start, block.size, &idnt, sizeof idnt);
-    } else if (Is(block.type, "DISO")) {
-        readBlock(start, block.size, &diso, sizeof diso);
-    } else if (Is(block.type, "INFO")) {
-        if (block.size > sizeof(BlockHeader)) {
-            std::vector<char> text(block.size - sizeof(BlockHeader));
-            if (file.readAt(start + sizeof(BlockHeader), text.data(), text.size()))
-                info = TrimmedText(text.data(), text.size());
-        }
-    } else if (Is(block.type, "VERS")) {
-        const uint32_t kHeader = sizeof(BlockHeader) + 4;
-        uint32_t length = 0;
-        if (block.size > kHeader && file.readAt(start + sizeof(BlockHeader), &length, 4)) {
-            length = std::min(length, block.size - kHeader);
-            std::vector<char> text(length);
-            if (length && file.readAt(start + kHeader, text.data(), length))
-                versions.push_back(TrimmedText(text.data(), length));
-        }
     } else if (Is(block.type, "CURV")) {
         if (lineariseLut.empty() && block.size > sizeof(BlockHeader)) {
             size_t entries = std::min<size_t>((block.size - sizeof(BlockHeader)) / 2, 65536);
@@ -461,7 +200,7 @@ void Clip::parseMetadata(const util::RandomAccessFile& file, uint64_t start, con
             if (!file.readAt(start + sizeof(BlockHeader), lineariseLut.data(), entries * 2)) lineariseLut.clear();
         }
     }
-    // NULL, BKUP, MARK, ELVL, DEBG, DARK, XREF, MLVI: nothing needed.
+    // STYL, DISO, INFO, VERS, NULL, BKUP, MARK, ELVL, DEBG, DARK, XREF, MLVI: nothing needed.
 }
 
 bool Clip::scanChunk(int chunk, std::string* error) {
@@ -530,24 +269,6 @@ bool Clip::scanChunk(int chunk, std::string* error) {
 
         const uint64_t start = pos;
         pos += block.size;
-        if (progress_ && scanTotal_) {
-            const double done = double(scannedBefore_ + pos) / double(scanTotal_);
-            if (done - reported_ >= 0.01) {
-                reported_ = done;
-                progress_(std::min(done, 0.999));
-            }
-        }
-
-        if (!Is(block.type, "VIDF") && !Is(block.type, "AUDF") && !Is(block.type, "NULL") && !Is(block.type, "BKUP") &&
-            !Is(block.type, "XREF") && !Is(block.type, "MLVI")) {
-            BlockRef ref;
-            std::memcpy(ref.type, block.type, 4);
-            ref.chunk = uint16_t(chunk);
-            ref.offset = start;
-            ref.size = block.size;
-            ref.timestamp = block.timestamp;
-            blocks_.push_back(ref);
-        }
 
         if (Is(block.type, "VIDF")) {
             VideoFrameHeader vidf;
@@ -561,16 +282,14 @@ bool Clip::scanChunk(int chunk, std::string* error) {
             f.timestamp = vidf.timestamp;
             f.panPosX = vidf.panPosX;
             f.panPosY = vidf.panPosY;
-            f.blockOffset = start;
             frames_.push_back(f);
-            if (preview_) return true;  // the first frame: enough for a preview
         } else if (Is(block.type, "AUDF")) {
             AudioFrameHeader audf;
             if (!readBlock(start, block.size, &audf, sizeof audf)) break;
             if (block.size < sizeof audf + audf.frameSpace) continue;
             audio_.push_back({start + sizeof audf + audf.frameSpace,
                               block.size - uint32_t(sizeof audf) - audf.frameSpace, uint16_t(chunk), audf.timestamp});
-        } else if (!Is(block.type, "NULL")) {
+        } else if (!Is(block.type, "NULL") && !Is(block.type, "MLVI")) {
             parseMetadata(file, start, block);
         }
     }
@@ -632,12 +351,7 @@ void unpackBits(const uint8_t* packed, uint16_t* out, size_t pixels, int bpp) {
     }
 }
 
-bool Clip::readRaw(uint16_t chunk, uint64_t offset, void* out, size_t size) const {
-    return chunk < chunks_.size() && chunks_[chunk]->readAt(offset, out, size);
-}
-
-bool Clip::decodeFrame(uint32_t index, uint16_t* out, std::vector<uint8_t>& scratch, std::string* error,
-                       bool linearise) const {
+bool Clip::decodeFrame(uint32_t index, uint16_t* out, std::vector<uint8_t>& scratch, std::string* error) const {
     const int w = width(), h = height(), bpp = bitsPerPixel();
     const size_t pixels = size_t(w) * h;
 
@@ -683,7 +397,7 @@ bool Clip::decodeFrame(uint32_t index, uint16_t* out, std::vector<uint8_t>& scra
             return false;
     }
 
-    if (linearise && !lineariseLut.empty()) {
+    if (!lineariseLut.empty()) {
         const uint16_t* lut = lineariseLut.data();
         for (size_t i = 0; i < pixels; ++i) out[i] = lut[out[i]];
     }
@@ -693,42 +407,20 @@ bool Clip::decodeFrame(uint32_t index, uint16_t* out, std::vector<uint8_t>& scra
 bool Clip::readSyncedAudio(std::vector<uint8_t>& pcm, std::string* error) const {
     pcm.clear();
     if (!hasAudio()) return true;
-
-    uint64_t total = 0;
-    for (const auto& a : audio_) total += a.dataSize;
-    std::vector<uint8_t> raw(static_cast<size_t>(total));
-    uint64_t at = 0;
+    std::vector<uint8_t> raw;
+    raw.reserve(size_t(audioStarts().back()));
     for (const auto& a : audio_) {
+        const size_t at = raw.size();
+        raw.resize(at + a.dataSize);
         if (!chunks_[a.chunk]->readAt(a.dataOffset, raw.data() + at, a.dataSize)) {
             if (error) *error = "Audio read error";
             return false;
         }
-        at += a.dataSize;
     }
-
-    const uint64_t sampleSize = uint64_t(wavi.channels) * (wavi.bitsPerSample / 8);
-    if (sampleSize == 0 || wavi.samplingRate == 0) return true;
-    const uint64_t blockAlign = sampleSize * 1024;
-
-    // Offset of the first audio sample against the first video frame, in bytes (whole samples).
-    const double bytesPerMicrosecond = double(wavi.samplingRate) * double(sampleSize) / 1000000.0;
-    const int64_t sync = int64_t((double(frames_[0].timestamp) - double(audio_[0].timestamp)) * bytesPerMicrosecond);
-    uint64_t drop = 0, pad = 0;
-    if (sync >= 0) drop = uint64_t(sync) - uint64_t(sync) % sampleSize;
-    else pad = uint64_t(-sync) - uint64_t(-sync) % sampleSize;
-    drop = std::min(drop, total);
-
-    const uint64_t synced = total - drop + pad;
-    const uint64_t syncedAligned = synced - synced % blockAlign + blockAlign;
-    // No longer than the video lasts (at the recorded frame rate).
-    const double seconds = fps() > 0 ? double(frames_.size()) / fps() : 0.0;
-    const uint64_t theoretic = uint64_t(double(wavi.samplingRate) * double(sampleSize) * seconds);
-    const uint64_t theoreticAligned = theoretic - theoretic % blockAlign + blockAlign;
-    const uint64_t finalSize = std::min(theoreticAligned, syncedAligned);
-
-    pcm.assign(size_t(finalSize), 0);
-    const uint64_t copy = std::min<uint64_t>(total - drop, finalSize > pad ? finalSize - pad : 0);
-    if (copy) std::memcpy(pcm.data() + pad, raw.data() + drop, size_t(copy));
+    const AudioSync s = audioSync();
+    pcm.assign(size_t(s.size), 0);
+    const uint64_t copy = std::min<uint64_t>(s.total - s.drop, s.size > s.pad ? s.size - s.pad : 0);
+    if (copy) std::memcpy(pcm.data() + s.pad, raw.data() + s.drop, size_t(copy));
     return true;
 }
 
@@ -745,7 +437,9 @@ const std::vector<uint64_t>& Clip::audioStarts() const {
     return audioStarts_;
 }
 
-// The same arithmetic as readSyncedAudio, without reading the audio.
+// MLV-App's readMlvAudioData(): the offset of the first sample against the first frame (whole
+// samples), the length rounded up to 1024 samples and cut to the frames' length at the
+// recorded rate.
 Clip::AudioSync Clip::audioSync() const {
     AudioSync s;
     if (!hasAudio()) return s;

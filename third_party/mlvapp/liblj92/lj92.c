@@ -862,7 +862,9 @@ int lj92_open(lj92* lj,
         else {
             self->rowcache = rowcache;
             self->outrow[0] = rowcache;
-            self->outrow[1] = &rowcache[self->x];
+            /* MLV Drive: a row is x * components values (was &rowcache[x]: with 2 components, as
+               camera MLV frames have, the two rows overlapped) */
+            self->outrow[1] = &rowcache[self->x * self->components];
         }
     }
 

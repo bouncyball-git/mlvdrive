@@ -27,7 +27,6 @@
 #include <errno.h>
 
 #include "../raw.h"
-#include "opt_med.h"
 #include "wirth.h"
 #include "pixelproc.h"
 
@@ -38,26 +37,7 @@
 #define COERCE(x,lo,hi) MAX(MIN((x),(hi)),(lo))
 #define ABS(a) ((a) > 0 ? (a) : -(a))
 
-#define CHROMA_SMOOTH_2X2
-#define chroma_smooth_2x2 chroma_smooth_2x2_ref
-#include "chroma_smooth.c"
-#undef CHROMA_SMOOTH_2X2
-#undef chroma_smooth_2x2
-
-#define CHROMA_SMOOTH_3X3
-#define chroma_smooth_3x3 chroma_smooth_3x3_ref
-#include "chroma_smooth.c"
-#undef CHROMA_SMOOTH_3X3
-#undef chroma_smooth_3x3
-
-#define CHROMA_SMOOTH_5X5
-#define chroma_smooth_5x5 chroma_smooth_5x5_ref
-#include "chroma_smooth.c"
-#undef CHROMA_SMOOTH_5X5
-#undef chroma_smooth_5x5
-
-/* MLV Drive: the fast versions everywhere (their vectors made portable: SSE2 / NEON with MSVC) */
-#include "chroma_smooth_fast5.c"
+/* MLV Drive: chroma smoothing (chroma_smooth*.c, opt_med.h) left out: not used */
 
 #ifdef __WIN32
 #define FMT_SIZE "%u"
@@ -71,7 +51,8 @@ FILE * (*pixelproc_open_map)(const char * file_name) = NULL;
 int * get_raw2ev(int black)
 {
     int * raw2ev = (int *)malloc(EV_RESOLUTION*sizeof(int));
-    
+    if (!raw2ev) return NULL; /* MLV Drive: the fixes check for NULL; the memset didn't */
+
     memset(raw2ev, 0, EV_RESOLUTION * sizeof(int));
     int i;
     #pragma omp parallel for
@@ -86,6 +67,7 @@ int * get_raw2ev(int black)
 int * get_ev2raw(int black)
 {
     int * _ev2raw = (int *)malloc(24*EV_RESOLUTION*sizeof(int));
+    if (!_ev2raw) return NULL; /* MLV Drive */
     int* ev2raw = _ev2raw + 10*EV_RESOLUTION;
 
     int i;
@@ -111,38 +93,6 @@ void free_luts(int * raw2ev, int * ev2raw)
         free(ev2raw - 10*EV_RESOLUTION);
         ev2raw = NULL;
     }
-}
-
-void chroma_smooth(int method, uint16_t * image_data, int width, int height, int black, int white, int * raw2ev, int * ev2raw)
-{
-    if(raw2ev == NULL || ev2raw == NULL) return;
-    
-    uint16_t * buf = (uint16_t *)malloc(width*height*sizeof(uint16_t));
-    if (!buf)
-    {
-        return;
-    }
-    memcpy(buf, image_data, width*height*sizeof(uint16_t));
-    
-    switch (method) {
-        case 2:
-            chroma_smooth_2x2(width, height, buf, image_data, raw2ev, ev2raw, black, white);
-            break;
-        case 3:
-            chroma_smooth_3x3(width, height, buf, image_data, raw2ev, ev2raw, black, white);
-            break;
-        case 5:
-            chroma_smooth_5x5(width, height, buf, image_data, raw2ev, ev2raw, black, white);
-            break;
-            
-        default:
-#ifndef STDOUT_SILENT
-            err_printf("Unsupported chroma smooth method\n");
-#endif
-            break;
-    }
-    
-    free(buf);
 }
 
 /* find color of the raw pixel */
@@ -432,18 +382,29 @@ static int load_pixel_map(pixel_map * map, uint32_t camera_id, int raw_width, in
     FILE* f = pixelproc_open_map ? pixelproc_open_map(file_name) : fopen(file_name, "r");
     if(!f) return 0;
 
-    uint32_t cam_id = 0x0;
-    if(fscanf(f, "#FPM%*[ ]%X%*[^\n]", &cam_id) != 1)
+    /* MLV Drive: read line by line. The fscanf loop this replaces never ended on a line that
+       isn't two numbers (a comment after the first line, a stray character): fscanf returned 0
+       without reading on, and the last x, y (uninitialised at first) went into the map again and
+       again until memory ran out. Now such lines are skipped; a header "#FPM <camera id>" on the
+       first line is still checked against the clip's camera. */
+    char line[256];
+    int first = 1;
+    while (fgets(line, sizeof line, f))
     {
-        rewind(f);
-    }
-
-    /* if .fpm has header compare cameraID from this header to cameraID from MLV, if different then return 0 */
-    if(cam_id != 0 && cam_id != camera_id) { fclose(f); return 0; }
-
-    int x, y;
-    while (fscanf(f, "%d%*[ \t]%d%*[^\n]", &x, &y) != EOF)
-    {
+        if (!strchr(line, '\n') && !feof(f))
+        {
+            int c;
+            while ((c = fgetc(f)) != EOF && c != '\n') {} /* the rest of a long line */
+        }
+        if (first)
+        {
+            unsigned int cam_id = 0;
+            first = 0;
+            /* if .fpm has header compare cameraID from this header to cameraID from MLV, if different then return 0 */
+            if (sscanf(line, "#FPM %X", &cam_id) == 1 && cam_id != 0 && cam_id != camera_id) { fclose(f); return 0; }
+        }
+        int x, y;
+        if (sscanf(line, "%d %d", &x, &y) != 2) continue;
         if(!add_pixel_to_map(map, x, y))
         {
             fclose(f);
@@ -1268,7 +1229,7 @@ fpm_check:
                         interpolate_around(image_data, i, w, raw2ev, ev2raw);
                     }
                 }
-                else if(i > 0 && i < w * h)
+                else if(x >= 0 && x < w && y >= 0 && y < h) /* MLV Drive: was i > 0 && i < w * h, which let a map pixel outside the frame (x < 0 or x >= w: beside a crop) "fix" one on a neighbouring row, reading up to 3 values past the image */
                 {
                     // handle edge pixels
                     int horizontal_edge = (x >= w - 3 && x < w) || (x >= 0 && x <= 3);
@@ -1494,7 +1455,7 @@ mem_err:
                         interpolate_around(image_data, i, w, raw2ev, ev2raw);
                     }
                 }
-                else if(i > 0 && i < w * h)
+                else if(x >= 0 && x < w && y >= 0 && y < h) /* MLV Drive: was i > 0 && i < w * h, which let a map pixel outside the frame (x < 0 or x >= w: beside a crop) "fix" one on a neighbouring row, reading up to 3 values past the image */
                 {
                     // handle edge pixels
                     int horizontal_edge = (x >= w - 3 && x < w) || (x >= 0 && x <= 3);

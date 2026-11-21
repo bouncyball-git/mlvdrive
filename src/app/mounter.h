@@ -9,7 +9,9 @@
 // at every 30 seconds; local ones aren't (that would keep sleeping disks awake). `mlvdrive rescan
 // M:` asks for one at once.
 //
-// mount(), unmount() and rescan() may be called from different threads (one at a time inside).
+// mount() and unmount() are called from one thread at a time (never two at once); rescan(),
+// info() and stats() from any thread at any time. A rescan holds the mounter while it opens new
+// clips: info() and stats() wait for it.
 #pragma once
 
 #include "app/settings.h"
@@ -89,8 +91,5 @@ private:
 // rescans).
 std::wstring stopEventName(std::wstring mountPoint);
 std::wstring rescanEventName(std::wstring mountPoint);
-
-std::string narrow(const std::wstring& w);  // UTF-16 -> UTF-8
-std::wstring widen(const std::string& s);   // UTF-8 -> UTF-16
 
 }  // namespace app

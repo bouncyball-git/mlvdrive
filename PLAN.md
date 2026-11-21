@@ -44,7 +44,7 @@ From `D:\devel\MLV-OFX` (tested; decodes the test clip correctly):
 |---|---|---|
 | `src/mlv/clip.{h,cpp}`, `src/mlv/mlv_format.h` | `src/mlv/` | MLV reading: blocks, frame index, spanned files `.M00…`, LJ92 decoding, metadata, audio (16-bit PCM aligned to the first video frame) |
 | `src/mlv/color.{h,cpp}` | `src/mlv/` | camera matrices (ColorMatrix2), as-shot white balance, Kelvin/tint |
-| `src/raw/rawfix.{h,cpp}` | `src/raw/` | raw corrections: vertical stripes, focus pixels, bad pixels, chroma smoothing (multi-threaded) |
+| `src/raw/rawfix.{h,cpp}` | `src/raw/` | raw corrections: vertical stripes, focus pixels, bad pixels (chroma smoothing came too; removed in the 0.7 review, never used) |
 | `src/util/file.{h,cpp}` | `src/util/` | UTF-8 paths, positioned reads from several threads |
 | `src/parallel.{h,cpp}` | `src/` | thread pool (`par::forRange`) |
 | `third_party/mlvapp/` (whole) | `third_party/mlvapp/` | MLV-App C code: fast LJ92 decoder **and encoder**, camera table, pixel fixes; its README and LICENSE |
@@ -323,6 +323,24 @@ in Resolve.
      clip replaced by other footage under the same name updates (124 -> 542 frames, frame 300
      verified) while a handle opened before keeps reading; a deleted clip disappears; listings
      are fresh after each change.
+   - Code review (0.7, the whole tree with third_party): memory, races, dead code, comments.
+     Fixed: a pixel map line that isn't two numbers (a comment after the first line) made
+     MLV-App's reader loop until memory ran out (now line by line; the old build reached 431 MB
+     in 8 s on such a map); a map pixel outside the frame "fixed" one on a neighbouring row and
+     read past the image; the generic LJ92 decoder's row buffers overlapped with 2 components
+     (the fast decoder, used for every camera frame, wasn't affected); files still open at
+     unmount were never freed (WinFsp doesn't Close them), with them an old tree and its clip
+     files; a frame being made when its clip was forgotten was cached anyway; a rebuild wrote a
+     taken-over clip's name while the drive read it; invalid UTF-8 or UTF-16 (a settings file
+     saved as ANSI, a lone surrogate in a file name) threw from std::filesystem's conversions:
+     a crash, now U+FFFD; `mlvdrive_tool` took its arguments in the ANSI code page (non-Latin
+     paths didn't open); the pixel map hook was set by every fixer at once. Removed as unused:
+     chroma smoothing (third_party too), the forced stripe and bad pixel modes (the latter
+     rewrote a clip's shared map on every frame: a race with frames made in parallel),
+     mlv::Clip's index-file and preview modes, progress callback, block list and unused
+     metadata, the DNG writer's unused options, the colour matrix code, three copies of the
+     UTF-8 conversions (one in util now). Audio other than 16-bit is no longer shown as a WAV
+     that would be wrong. test.ps1: 20 of 20.
 8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).
 
 **Resolve, later** (when the user wants to run it): import `M:\<clip>` as one clip with the

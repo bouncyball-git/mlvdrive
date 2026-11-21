@@ -9,6 +9,12 @@
 
 namespace util {
 
+// UTF-8 <-> wide text (UTF-16 on Windows). Invalid input (text that isn't UTF-8, a lone
+// surrogate in a file name) becomes U+FFFD: never an exception, which std::filesystem's own
+// conversions throw on Windows.
+std::wstring widen(const std::string& utf8);
+std::string narrow(const std::wstring& wide);
+
 std::filesystem::path u8(const std::string& utf8);       // UTF-8 text -> path
 std::string u8(const std::filesystem::path& path);       // path -> UTF-8 text
 
@@ -26,7 +32,6 @@ public:
 
     bool open(const std::string& utf8Path);
     void close();
-    bool isOpen() const;
     uint64_t size() const { return size_; }
     // Reads exactly `bytes` at `offset`; false on an error or a short read. Thread-safe.
     bool readAt(uint64_t offset, void* buffer, size_t bytes) const;

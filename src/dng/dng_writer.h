@@ -5,8 +5,6 @@
 // size for every frame of a clip, and so has the image in the uncompressed outputs.
 #pragma once
 
-#include "mlv/color.h"
-
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -34,13 +32,6 @@ enum class Timecode { FrameCount, TimeOfDay };
 
 struct Options {
     Output output = Output::Uncompressed16;
-    double fps = 0;                 // > 0: overrides the clip's frame rate (FrameRate tag, timecode)
-    int stretchNum = 0;             // DefaultScale (vertical); 0: from the clip (binning/skipping)
-    int stretchDen = 0;
-    int hStretchNum = 1;            // DefaultScale (horizontal): anamorphic lenses
-    int hStretchDen = 1;
-    bool customWhiteBalance = false;
-    color::Vec3 wbMultipliers{1, 1, 1};  // with customWhiteBalance: AsShotNeutral = 1 / these
     Timecode timecode = Timecode::TimeOfDay;
 };
 
@@ -57,10 +48,9 @@ public:
         std::vector<uint8_t> header;
     };
 
-    // The same for every frame of the clip. imageSize() is 0 for the outputs whose size varies
-    // (Lossless, PassThrough); fileSize() then too.
+    // The same for every frame of the clip. fileSize() is 0 for the outputs whose size varies
+    // (Lossless, PassThrough).
     uint64_t headerSize() const { return headerSize_; }
-    uint64_t imageSize() const { return imageSize_; }
     uint64_t fileSize() const { return imageSize_ ? headerSize_ + imageSize_ : 0; }
 
     // The whole DNG file of frame `frameIndex` into `out` (resized). Thread-safe (one Scratch per
@@ -74,11 +64,12 @@ public:
     bool writeFrame(uint32_t frameIndex, const std::string& path, Scratch& scratch, uint64_t* bytesWritten,
                     std::string* error) const;
 
-    // Whether the output really is pass-through (a clip with a linearisation curve can't be).
+    // The output made: as asked, but Lossless for PassThrough of a clip that can't be passed
+    // through (one with a linearisation curve, or JPEG 2000).
     Output effectiveOutput() const { return output_; }
 
-    // The FrameRate tag (the option, else the clip's), and the frame count the TimeCodes tag of
-    // a frame holds (its timecode in frames at the rounded rate): for audio to line up with.
+    // The FrameRate tag (the clip's), and the frame count the TimeCodes tag of a frame holds (its
+    // timecode in frames at the rounded rate): for audio to line up with.
     double frameRate() const;
     int64_t timecodeFrame(uint32_t frameIndex) const;
 
@@ -111,9 +102,5 @@ struct GeneratedFrame {
     std::string make, model, reelName;
 };
 std::vector<uint8_t> generatedHeader(const GeneratedFrame& frame);
-
-// Packs 16-bit values into a big-endian (most significant bit first) stream of `bits` per
-// value, each row starting on a byte. Returns the bytes written to `out` (resized).
-size_t packBitsBigEndian(const uint16_t* in, int width, int height, int bits, std::vector<uint8_t>& out);
 
 }  // namespace dng

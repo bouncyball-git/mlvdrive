@@ -8,6 +8,7 @@
 #include "app/settings.h"
 #include "fs/winfsp_fs.h"
 #include "parallel.h"
+#include "util/file.h"
 
 #include <windows.h>
 #include <commctrl.h>
@@ -191,7 +192,7 @@ void JobDone(JobResult* raw) {
         UpdateIcon();
         if (!r->skipped.empty()) {
             Balloon(L"Some clips were left out",
-                    std::to_wstring(r->skipped.size()) + L" couldn't be opened, e.g.:\n" + app::widen(r->skipped[0]), true);
+                    std::to_wstring(r->skipped.size()) + L" couldn't be opened, e.g.:\n" + util::widen(r->skipped[0]), true);
         } else if (r->notify) {
             wchar_t text[256];
             swprintf_s(text, L"%zu clip%s, %.1f GB of DNG.", g_info.clips, g_info.clips == 1 ? L"" : L"s",
@@ -203,7 +204,7 @@ void JobDone(JobResult* raw) {
         if (r->mount) {
             g_lastError = r->error;
             UpdateIcon();
-            Balloon(L"Couldn't mount", app::widen(r->error), true);
+            Balloon(L"Couldn't mount", util::widen(r->error), true);
         } else {
             UpdateIcon();
         }
@@ -214,7 +215,7 @@ void JobDone(JobResult* raw) {
 void SettingsChanged() {
     std::string error;
     if (!app::saveSettings(g_settingsPath, g_settings, &error))
-        Balloon(L"Couldn't save the settings", app::widen(error), true);
+        Balloon(L"Couldn't save the settings", util::widen(error), true);
     if (g_state == State::Mounted) StartJob(true, false);
 }
 
@@ -308,7 +309,7 @@ void ShowMenu() {
                    g_info.clips == 1 ? L"" : L"s", g_info.bytes / 1e9);
         status = text;
     } else if (busy) status = L"MLV Drive — " + g_busyText;
-    else if (!g_lastError.empty()) status = L"Not mounted: " + Shorten(app::widen(g_lastError), 60);
+    else if (!g_lastError.empty()) status = L"Not mounted: " + Shorten(util::widen(g_lastError), 60);
     else status = L"MLV Drive — not mounted";
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, status.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -451,7 +452,7 @@ void Command(UINT id) {
         case kReloadSettings: {
             std::vector<std::string> warnings;
             g_settings = app::loadSettings(g_settingsPath, &warnings);
-            if (!warnings.empty()) Balloon(L"Settings file", app::widen(warnings[0]), true);
+            if (!warnings.empty()) Balloon(L"Settings file", util::widen(warnings[0]), true);
             if (g_state == State::Mounted) StartJob(true, false);
             return;
         }
@@ -536,7 +537,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     UpdateIcon(NIM_ADD);
 
-    if (!warnings.empty()) Balloon(L"Settings file", app::widen(warnings[0]), true);
+    if (!warnings.empty()) Balloon(L"Settings file", util::widen(warnings[0]), true);
     if (!g_winfsp) {
         Balloon(L"WinFsp isn't installed", L"MLV Drive needs it for the drive: right-click the icon to get it.", true);
     } else if (firstRun) {

@@ -36,30 +36,6 @@ void TemperatureToRgb(double t, double rgb[3]) {
     for (int c = 0; c < 3; c++) rgb[c] /= max;
 }
 
-// dcraw's pseudoinverse: out = (in^T in)^-1 in^T, transposed (size x 3).
-void Pseudoinverse(const double (*in)[3], double (*out)[3], int size) {
-    double work[3][6];
-    for (int i = 0; i < 3; i++) {
-        for (int j = 0; j < 6; j++) work[i][j] = j == i + 3;
-        for (int j = 0; j < 3; j++)
-            for (int k = 0; k < size; k++) work[i][j] += in[k][i] * in[k][j];
-    }
-    for (int i = 0; i < 3; i++) {
-        double num = work[i][i];
-        for (int j = 0; j < 6; j++) work[i][j] /= num;
-        for (int k = 0; k < 3; k++) {
-            if (k == i) continue;
-            num = work[k][i];
-            for (int j = 0; j < 6; j++) work[k][j] -= work[i][j] * num;
-        }
-    }
-    for (int i = 0; i < size; i++)
-        for (int j = 0; j < 3; j++) {
-            out[i][j] = 0;
-            for (int k = 0; k < 3; k++) out[i][j] += work[j][k + 3] * in[i][k];
-        }
-}
-
 void CameraXyz(uint32_t model, double camXyz[3][3]) {
     const int32_t* m = camidGetColorMatrix2(model);
     for (int i = 0; i < 9; i++) camXyz[i / 3][i % 3] = m[i * 2 + 1] ? double(m[i * 2]) / m[i * 2 + 1] : 0.0;
@@ -81,9 +57,9 @@ void CameraFromSrgb(uint32_t model, double camRgb[3][3], double preMul[3]) {
     }
 }
 
-}  // namespace
-
-Vec3 kelvinToMultipliers(double kelvin, double tint, uint32_t cameraModel) {
+// Raw channel multipliers (green = 1) that make a neutral under a light of this colour
+// temperature neutral. `tint` > 0 adds magenta (less green), < 0 adds green; 0 neutral.
+Vec3 KelvinToMultipliers(double kelvin, double tint, uint32_t cameraModel) {
     // MLV-App inverts cam_rgb into rgb_cam and then back again; for a 3x3 matrix that is cam_rgb
     // itself (dcraw's pseudoinverse(A) is A^-T, and applied twice gives A).
     double back[3][3], preMul[3];
@@ -106,6 +82,8 @@ Vec3 kelvinToMultipliers(double kelvin, double tint, uint32_t cameraModel) {
     return mul;
 }
 
+}  // namespace
+
 double asShotKelvin(const mlv::Clip& clip) {
     switch (clip.wbal.wb_mode) {
         case mlv::kWbAuto:
@@ -124,18 +102,7 @@ Vec3 asShotMultipliers(const mlv::Clip& clip) {
         // wbgain_* are the neutral (dcraw convention, 1/multiplier), MLV-App writes them as AsShotNeutral.
         return {double(w.wbgain_g) / w.wbgain_r, 1.0, double(w.wbgain_g) / w.wbgain_b};
     }
-    return kelvinToMultipliers(asShotKelvin(clip), 0, clip.idnt.cameraModel);
-}
-
-Mat3 cameraToSrgb(uint32_t cameraModel) {
-    double camRgb[3][3], preMul[3];
-    CameraFromSrgb(cameraModel, camRgb, preMul);
-    double inverse[3][3];
-    Pseudoinverse(camRgb, inverse, 3);  // inverse[cam][rgb]
-    Mat3 m;
-    for (int r = 0; r < 3; r++)
-        for (int c = 0; c < 3; c++) m[size_t(r * 3 + c)] = inverse[c][r];
-    return m;
+    return KelvinToMultipliers(asShotKelvin(clip), 0, clip.idnt.cameraModel);
 }
 
 }  // namespace color

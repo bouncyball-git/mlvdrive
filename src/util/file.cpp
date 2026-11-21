@@ -20,6 +20,26 @@
 
 namespace util {
 
+#ifdef _WIN32
+std::wstring widen(const std::string& utf8) {
+    if (utf8.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
+    std::wstring wide(size_t(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), wide.data(), n);
+    return wide;
+}
+
+std::string narrow(const std::wstring& wide) {
+    if (wide.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, wide.data(), int(wide.size()), nullptr, 0, nullptr, nullptr);
+    std::string utf8(size_t(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wide.data(), int(wide.size()), utf8.data(), n, nullptr, nullptr);
+    return utf8;
+}
+
+std::filesystem::path u8(const std::string& utf8) { return std::filesystem::path(widen(utf8)); }
+std::string u8(const std::filesystem::path& path) { return narrow(path.wstring()); }
+#else
 std::filesystem::path u8(const std::string& utf8) {
 #if defined(__cpp_char8_t)
     return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
@@ -33,20 +53,14 @@ std::string u8(const std::filesystem::path& path) {
     return std::string(text.begin(), text.end());
 }
 
-#ifdef _WIN32
-static std::wstring Wide(const std::string& utf8) {
-    if (utf8.empty()) return {};
-    int n = MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), nullptr, 0);
-    std::wstring wide(size_t(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8.data(), int(utf8.size()), wide.data(), n);
-    return wide;
-}
+std::wstring widen(const std::string& utf8) { return u8(utf8).wstring(); }
+std::string narrow(const std::wstring& wide) { return u8(std::filesystem::path(wide)); }
 #endif
 
 std::FILE* openFile(const std::string& utf8Path, const char* mode) {
 #ifdef _WIN32
     std::wstring wmode(mode, mode + std::strlen(mode));
-    return _wfopen(Wide(utf8Path).c_str(), wmode.c_str());
+    return _wfopen(widen(utf8Path).c_str(), wmode.c_str());
 #else
     return std::fopen(utf8Path.c_str(), mode);
 #endif
@@ -59,18 +73,10 @@ bool fileExists(const std::string& utf8Path) {
 
 RandomAccessFile::~RandomAccessFile() { close(); }
 
-bool RandomAccessFile::isOpen() const {
-#ifdef _WIN32
-    return handle_ != nullptr;
-#else
-    return fd_ >= 0;
-#endif
-}
-
 bool RandomAccessFile::open(const std::string& utf8Path) {
     close();
 #ifdef _WIN32
-    HANDLE h = CreateFileW(Wide(utf8Path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    HANDLE h = CreateFileW(widen(utf8Path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
     LARGE_INTEGER size;

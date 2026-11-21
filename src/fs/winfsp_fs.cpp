@@ -2,6 +2,7 @@
 #include <winfsp/winfsp.h>
 
 #include "fs/winfsp_fs.h"
+#include "util/file.h"
 
 #include <sddl.h>
 
@@ -9,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <unordered_set>
 #include <vector>
 
 namespace fsys {
@@ -18,14 +20,6 @@ namespace {
 constexpr UINT32 kSectorSize = 4096;
 
 uint64_t roundUp(uint64_t n) { return (n + kSectorSize - 1) / kSectorSize * kSectorSize; }
-
-std::string narrow(const std::wstring& w) {
-    if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(size_t(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), n, nullptr, nullptr);
-    return s;
-}
 
 std::string ntError(const char* what, NTSTATUS status) {
     char text[96];
@@ -55,6 +49,11 @@ struct Drive::Impl {
     PSECURITY_DESCRIPTOR security = nullptr;  // the same for everything: read-only for everyone
     ULONG securitySize = 0;
     std::wstring mountPoint;
+    // What is open: WinFsp doesn't Close what is still open when the file system is deleted, so
+    // unmount() frees those (with them the frames and the old trees they hold, and those trees'
+    // clip files).
+    std::mutex openMutex;
+    std::unordered_set<FileContext*> open;
 
     Impl(std::shared_ptr<const vfs::Tree> t, vfs::FrameCache& c) : tree(std::move(t)), cache(c) {}
 
@@ -149,6 +148,10 @@ struct Drive::Impl {
         if (!ctx) return STATUS_INSUFFICIENT_RESOURCES;
         ctx->tree = std::move(tree);
         ctx->node = n;
+        {
+            std::lock_guard<std::mutex> lock(self->openMutex);
+            self->open.insert(ctx);
+        }
         *context = ctx;
         self->fileInfo(n, info);
         return STATUS_SUCCESS;
@@ -171,8 +174,17 @@ struct Drive::Impl {
         ctx->header = std::vector<uint8_t>();
     }
 
-    static VOID Close(FSP_FILE_SYSTEM* /*fs*/, PVOID context) {
+    static VOID Close(FSP_FILE_SYSTEM* fs, PVOID context) {
         auto* ctx = static_cast<FileContext*>(context);
+        {
+            Impl* self = of(fs);
+            std::lock_guard<std::mutex> lock(self->openMutex);
+            self->open.erase(ctx);
+        }
+        destroy(ctx);
+    }
+
+    static void destroy(FileContext* ctx) {
         FspFileSystemDeleteDirectoryBuffer(&ctx->dirBuffer);
         delete ctx;
     }
@@ -190,7 +202,7 @@ struct Drive::Impl {
             const size_t n = size_t(std::min<uint64_t>(size - offset, length));
             std::string error;
             if (!mlv::readWav(*c.clip, c.wav, offset, n, static_cast<uint8_t*>(buffer), &error)) {
-                std::fprintf(stderr, "%s audio: %s\n", narrow(c.name).c_str(), error.c_str());
+                std::fprintf(stderr, "%s audio: %s\n", util::narrow(c.name).c_str(), error.c_str());
                 return STATUS_UNEXPECTED_IO_ERROR;
             }
             *transferred = ULONG(n);
@@ -213,7 +225,7 @@ struct Drive::Impl {
                 std::string error;
                 ctx->file = self->cache.get(ctx->node.dir->clip, ctx->node.frame, true, &error);
                 if (!ctx->file) {
-                    std::fprintf(stderr, "%s frame %u: %s\n", narrow(c.name).c_str(), ctx->node.frame, error.c_str());
+                    std::fprintf(stderr, "%s frame %u: %s\n", util::narrow(c.name).c_str(), ctx->node.frame, error.c_str());
                     return STATUS_UNEXPECTED_IO_ERROR;
                 }
                 bytes = ctx->file.get();
@@ -369,7 +381,8 @@ bool Drive::mount(const std::wstring& mountPoint, bool debug, std::string* error
     GetSystemTimeAsFileTime(&now);
     params.VolumeCreationTime = uint64_t(now.dwHighDateTime) << 32 | now.dwLowDateTime;
     params.VolumeSerialNumber = UINT32(params.VolumeCreationTime / (10000 * 1000));
-    // The tree never changes while mounted: names, sizes and dates can be cached for good.
+    // Names, sizes and dates are cached for good: they only change when the tree is replaced,
+    // and update() then tells Windows what changed (which drops those from its caches).
     params.FileInfoTimeout = INFINITE;
     params.CaseSensitiveSearch = 0;
     params.CasePreservedNames = 1;
@@ -416,7 +429,7 @@ bool Drive::mount(const std::wstring& mountPoint, bool debug, std::string* error
         m.fileSystem = nullptr;
         if (error) {
             *error = ntError("mounting", status);
-            if (!mountPoint.empty()) *error += " at " + narrow(mountPoint) + ": in use?";
+            if (!mountPoint.empty()) *error += " at " + util::narrow(mountPoint) + ": in use?";
         }
         return false;
     }
@@ -440,6 +453,10 @@ void Drive::unmount() {
         FspFileSystemRemoveMountPoint(m.fileSystem);
         FspFileSystemDelete(m.fileSystem);
         m.fileSystem = nullptr;
+        // No more calls come: what was still open (an app holding a file) won't be closed.
+        std::lock_guard<std::mutex> lock(m.openMutex);
+        for (FileContext* ctx : m.open) Impl::destroy(ctx);
+        m.open.clear();
     }
     if (m.security) {
         LocalFree(m.security);

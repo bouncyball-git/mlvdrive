@@ -111,14 +111,7 @@ void StripeHistogram(const uint16_t* img, int black, int white, int width, int y
 
 Stripes FactorsFromHistogram(const std::vector<int>& hist, const int num[8], int frameSize);
 
-Stripes DetectStripes(const uint16_t* img, int black, int white, int frameSize, int width, int height,
-                      bool onePass = false) {
-    if (onePass) {  // as it was: one dither sequence through the whole frame, on one thread
-        std::vector<int> hist(size_t(8) * kFixpRange, 0);
-        int num[8] = {};
-        StripeHistogram(img, black, white, width, 0, height, 12345u, hist.data(), num);
-        return FactorsFromHistogram(hist, num, frameSize);
-    }
+Stripes DetectStripes(const uint16_t* img, int black, int white, int frameSize, int width, int height) {
     // 16 fixed bands of rows, each with its own dither (seeded by its number), counted on up to 8
     // threads and added up: the same result whatever the thread count, every run.
     constexpr int kBands = 16;
@@ -300,6 +293,12 @@ FILE* OpenPixelMap(const char* name) {
     return nullptr;
 }
 
+// Whether a clip has its own focus pixel map beside it (<clip name>.fpm).
+bool ClipHasOwnFocusMap(const mlv::Clip& clip) {
+    std::error_code ec;
+    return std::filesystem::is_regular_file(ClipMap(clip, ".fpm"), ec);
+}
+
 }  // namespace
 
 void setPixelMapFolders(const std::vector<std::string>& folders) {
@@ -321,44 +320,23 @@ std::vector<std::string> defaultPixelMapFolders() {
     return folders;
 }
 
-bool clipHasOwnFocusMap(const mlv::Clip& clip) {
-    std::error_code ec;
-    return std::filesystem::is_regular_file(ClipMap(clip, ".fpm"), ec);
-}
-
 void setSimd(bool on) {
     g_simd.store(on, std::memory_order_relaxed);
-}
-
-void stripeFactors(const mlv::Clip& clip, const uint16_t* image, bool onePass, double out[8]) {
-    const int w = clip.width(), h = clip.height();
-    const int shift = std::max(0, 14 - clip.bitsPerPixel());
-    std::vector<uint16_t> img14(image, image + size_t(w) * h);
-    for (auto& v : img14) v = uint16_t(v << shift);
-    int frameSize = clip.rawi.raw_info.width * clip.rawi.raw_info.height * 14 / 8;
-    if (frameSize <= 0) frameSize = w * h * 14 / 8;
-    Stripes s = DetectStripes(img14.data(), clip.blackLevel() << shift, clip.whiteLevel() << shift, frameSize, w, h, onePass);
-    for (int j = 0; j < 8; ++j) out[j] = double(s.coefficients[j]) / kFixpOne;
-}
-
-bool cameraHasFocusPixels(uint32_t model) {
-    switch (model) {
-        case 0x80000331: case 0x80000355: case 0x80000346: case 0x80000301: case 0x80000326: return true;
-        default: return false;
-    }
 }
 
 Fixer::Fixer(const mlv::Clip& clip, const FixSettings& settings) : clip_(clip), settings_(settings) {
     focusMap_.type = PIX_FOCUS;
     badMap_.type = PIX_BAD;
-    pixelproc_open_map = OpenPixelMap;
-    if (!settings.enabled) return;
+    // The map lookup, set once for the process (fixers are made on several threads at once).
+    static const bool hooked = (pixelproc_open_map = OpenPixelMap, true);
+    (void)hooked;
+    if (settings_.badPixels == 2) settings_.badPixels = 1;  // see FixSettings
 
     stripes_ = settings.verticalStripes < 0 ? (clip.idnt.cameraModel == 0x80000285 ? 1 : 0) : settings.verticalStripes;
     const int dotMode = FocusDotMode(clip);
-    focus_ = settings.focusPixels < 0 ? (dotMode != 0 || clipHasOwnFocusMap(clip) ? 1 : 0) : settings.focusPixels;
-    cropRec_ = dotMode == 2 ? 1 : (focus_ == 2 ? 1 : 0);
-    active_ = stripes_ || focus_ || settings.badPixels || settings.chromaSmooth;
+    focus_ = settings.focusPixels < 0 ? (dotMode != 0 || ClipHasOwnFocusMap(clip) ? 1 : 0) : settings.focusPixels;
+    cropRec_ = dotMode == 2 ? 1 : 0;
+    active_ = stripes_ || focus_ || settings_.badPixels;
 
     const int shift = std::max(0, 14 - clip.bitsPerPixel());
     black14_ = clip.blackLevel() << shift;
@@ -418,39 +396,32 @@ void Fixer::run(uint16_t* image, uint32_t frameIndex, bool first) {
     if (stripes_) {
         int frameSize = clip_.rawi.raw_info.width * clip_.rawi.raw_info.height * 14 / 8;
         if (frameSize <= 0) frameSize = int(pixels * 14 / 8);
-        if (stripes_ == 2) {
-            Stripes s = DetectStripes(image, black14_, white14_, frameSize, w, h);  // forced: every frame
-            if (s.needed) ApplyStripes(s, image, black14_, white14_, w, h);
-        } else {
-            if (first) {
-                Stripes s = DetectStripes(image, black14_, white14_, frameSize, w, h);
-                stripesNeeded_ = s.needed;
-                std::copy(std::begin(s.coefficients), std::end(s.coefficients), stripeCoefficients_);
-            }
-            if (stripesNeeded_) {
-                Stripes s;
-                s.needed = true;
-                std::copy(std::begin(stripeCoefficients_), std::end(stripeCoefficients_), s.coefficients);
-                ApplyStripes(s, image, black14_, white14_, w, h);
-            }
+        if (first) {
+            Stripes s = DetectStripes(image, black14_, white14_, frameSize, w, h);
+            stripesNeeded_ = s.needed;
+            std::copy(std::begin(s.coefficients), std::end(s.coefficients), stripeCoefficients_);
+        }
+        if (stripesNeeded_) {
+            Stripes s;
+            s.needed = true;
+            std::copy(std::begin(stripeCoefficients_), std::end(stripeCoefficients_), s.coefficients);
+            ApplyStripes(s, image, black14_, white14_, w, h);
         }
     }
 
+    // The first run loads or makes the maps (status 2: there are pixels to fix, 3: none); the
+    // later ones, on any thread, only read them. Interpolation: MLV-App's default (MLVFS).
     if (focus_ && focusStatus_ < 3) {
         const int unified = clip_.compression() == mlv::Compression::Lossless ? 5 : 0;
         fix_focus_pixels(&focusMap_, &focusStatus_, image, clip_.idnt.cameraModel, uint16_t(w), uint16_t(h),
                          f.panPosX, f.panPosY, clip_.rawi.raw_info.width, clip_.rawi.raw_info.height, cropRec_,
-                         unified, settings_.focusMethod, 0, raw2ev_, ev2raw_);
+                         unified, 0, 0, raw2ev_, ev2raw_);
     }
 
     if (settings_.badPixels && badStatus_ < 3) {
         fix_bad_pixels(&badMap_, &badStatus_, image, clip_.idnt.cameraModel, uint16_t(w), uint16_t(h), f.panPosX,
                        f.panPosY, clip_.rawi.raw_info.width, clip_.rawi.raw_info.height, black14_,
-                       settings_.badPixels, settings_.badPixelSearch, settings_.badPixelMethod, 0, raw2ev_, ev2raw_);
-    }
-
-    if (settings_.chromaSmooth == 2 || settings_.chromaSmooth == 3 || settings_.chromaSmooth == 5) {
-        chroma_smooth(settings_.chromaSmooth, image, w, h, black14_, white14_, raw2ev_, ev2raw_);
+                       settings_.badPixels, settings_.badPixelSearch, 0, 0, raw2ev_, ev2raw_);
     }
 
     if (shift) {  // back to the clip's bit depth, rounded

@@ -9,6 +9,7 @@
 #include "app/mounter.h"
 #include "app/settings.h"
 #include "parallel.h"
+#include "util/file.h"
 
 #include <windows.h>
 
@@ -56,7 +57,7 @@ int usage() {
                  "  --read-ahead=N   frames made ahead of the one read (default: one per CPU; 0: none)\n"
                  "  --debug          log every file system request\n"
                  "  Ctrl+C or `mlvdrive unmount M:` unmounts.\n",
-                 app::narrow(app::settingsPath()).c_str());
+                 util::narrow(app::settingsPath()).c_str());
     return 2;
 }
 
@@ -76,24 +77,24 @@ int wmain(int argc, wchar_t** argv) {
         const std::wstring at = app::normalizeDrive(argv[2]);
         HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, app::stopEventName(at).c_str());
         if (!e) {
-            std::fprintf(stderr, "nothing mounted on %s by MLV Drive\n", app::narrow(at).c_str());
+            std::fprintf(stderr, "nothing mounted on %s by MLV Drive\n", util::narrow(at).c_str());
             return 1;
         }
         SetEvent(e);
         CloseHandle(e);
-        std::printf("unmounting %s\n", app::narrow(at).c_str());
+        std::printf("unmounting %s\n", util::narrow(at).c_str());
         return 0;
     }
     if (argc == 3 && std::wstring(argv[1]) == L"rescan") {
         const std::wstring at = app::normalizeDrive(argv[2]);
         HANDLE e = OpenEventW(EVENT_MODIFY_STATE, FALSE, app::rescanEventName(at).c_str());
         if (!e) {
-            std::fprintf(stderr, "nothing mounted on %s by MLV Drive\n", app::narrow(at).c_str());
+            std::fprintf(stderr, "nothing mounted on %s by MLV Drive\n", util::narrow(at).c_str());
             return 1;
         }
         SetEvent(e);
         CloseHandle(e);
-        std::printf("rescanning %s\n", app::narrow(at).c_str());
+        std::printf("rescanning %s\n", util::narrow(at).c_str());
         return 0;
     }
     if (argc < 2 || std::wstring(argv[1]) != L"mount") return usage();
@@ -149,7 +150,7 @@ int wmain(int argc, wchar_t** argv) {
     if (!positional.empty()) s.folders = positional;
     if (s.folders.empty() && !s.testPatterns) {
         std::fprintf(stderr, "no MLV folder: give one, or set folder = in %s\n\n",
-                     app::narrow(app::settingsPath()).c_str());
+                     util::narrow(app::settingsPath()).c_str());
         return usage();
     }
 
@@ -168,11 +169,11 @@ int wmain(int argc, wchar_t** argv) {
     }
     const app::MountInfo info = mounter.info();
     std::string what;
-    for (const auto& f : s.folders) what += (what.empty() ? "" : ", ") + app::narrow(f);
+    for (const auto& f : s.folders) what += (what.empty() ? "" : ", ") + util::narrow(f);
     if (what.empty()) what = "test patterns";
     std::printf("%s: %zu clip%s (%.1f GB of DNG), opened in %.0f ms\n", what.c_str(), info.clips,
                 info.clips == 1 ? "" : "s", info.bytes / 1e9, info.openMs);
-    std::printf("Mounted on %s (cache %u MB, read-ahead %u%s). Ctrl+C unmounts.\n", app::narrow(info.mountPoint).c_str(),
+    std::printf("Mounted on %s (cache %u MB, read-ahead %u%s). Ctrl+C unmounts.\n", util::narrow(info.mountPoint).c_str(),
                 info.cacheMb, info.readAhead,
                 !s.watch ? "" : info.polling ? ", watching the folders, network ones also every 30 s"
                                              : ", watching the folders");

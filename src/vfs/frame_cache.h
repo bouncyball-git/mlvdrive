@@ -73,6 +73,7 @@ private:
     struct Entry {
         FrameData data;              // null while being made
         bool ahead = false;          // made by read-ahead and not read yet
+        bool forgotten = false;      // being made when its clip was forgotten: not kept
         uint64_t run = 0;            // the clip's run it was made or last read in
         uint64_t seq = 0;            // when it was made (larger: later)
         std::list<Key>::iterator lru;  // valid once made

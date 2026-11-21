@@ -1,6 +1,8 @@
 From MLV-App (https://github.com/ilia3101/MLV-App), commit abdb10fd02dd (2026-11-11), `src/mlv/`:
 
-- `liblj92/` (MIT, Andrew Baldwin): lossless JPEG. Changed: `__builtin_clz` for MSVC; `extern "C"`;
+- `liblj92/` (MIT, Andrew Baldwin): lossless JPEG. Changed: the generic decoder's two row buffers
+  overlapped for images of several components (the second started a row of one component in);
+  `__builtin_clz` for MSVC; `extern "C"`;
   a fast decoder (`parseFast`) for predictor 1 and single-component predictor 6 streams written
   whole: a 64-bit bit reader refilling 8 bytes at a time without a branch where none is 0xFF,
   a combined 12-bit code + difference table (extra bits that don't fit read straight from the
@@ -9,11 +11,12 @@ From MLV-App (https://github.com/ilia3101/MLV-App), commit abdb10fd02dd (2026-11
   computed once, branch-free size categories and value bits, a 64-bit bit writer. The same values
   and the same bytes as the original (`lj92_fast = 0` uses it, for comparing).
 - `camid/` (GPL): camera colour matrices and focal plane data. Changed: `extern "C"`.
-- `llrawproc/pixelproc.c`, `chroma_smooth*.c`, `opt_med.h`, `wirth.h` (GPL): focus and bad
-  pixel fixes, chroma smoothing. Changed: pixel maps opened through `pixelproc_open_map`; a file
-  handle leak; the fast chroma smoothing (`chroma_smooth_fast5.c`) made portable: its 4-lane
-  vectors as GCC vector extensions, SSE2 or NEON, so MSVC builds use it too (it used the
-  reference code: 4-5x slower; the same output); `extern "C"`.
+- `llrawproc/pixelproc.c`, `wirth.h` (GPL): focus and bad pixel fixes. Changed: pixel maps opened
+  through `pixelproc_open_map`; a map read line by line (a line that wasn't two numbers, such as a
+  comment after the first line, made the reader loop until memory ran out); a map pixel outside
+  the frame no longer "fixes" one on a neighbouring row (reading up to 3 values past the image);
+  the look-up tables' allocations checked; a file handle leak; chroma smoothing left out
+  (`chroma_smooth*.c`, `opt_med.h`: not used); `extern "C"`.
 - `pixelmaps/` (from `pixel_maps/`): MLV-App's focus pixel maps, all 273 (650D, 700D, EOS M,
   100D, EOS M2 in their video and crop modes; the collection grew from Daniel Fort's
   ml-focus-pixels maps), for the modes the built-in patterns don't cover. Changed: line endings

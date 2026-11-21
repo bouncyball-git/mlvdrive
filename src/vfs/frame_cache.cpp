@@ -71,8 +71,10 @@ void FrameCache::finish(const Key& key, FrameData data, const std::string& /*err
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = entries_.find(key);
         if (it != entries_.end()) {
-            if (!data) {
-                entries_.erase(it);  // a reader waiting for it tries itself (and gets the error)
+            if (!data || it->second.forgotten) {
+                // Failed: a reader waiting for it tries itself (and gets the error). Forgotten: its
+                // maker gets it, the cache doesn't keep it (a reader waiting makes it again).
+                entries_.erase(it);
             } else {
                 Entry& e = it->second;
                 e.data = data;
@@ -170,7 +172,8 @@ void FrameCache::forget(uint64_t clipId) {
     auto end = std::remove_if(queue_.begin(), queue_.end(), [&](const Job& j) { return j.clip->id == clipId; });
     queue_.erase(end, queue_.end());
     for (auto it = entries_.lower_bound(Key{clipId, 0}); it != entries_.end() && it->first.clip == clipId;) {
-        if (!it->second.data) {  // being made: its maker finishes it (and finds it gone, or not)
+        if (!it->second.data) {  // being made: its maker finishes it, then lets it go
+            it->second.forgotten = true;
             ++it;
             continue;
         }

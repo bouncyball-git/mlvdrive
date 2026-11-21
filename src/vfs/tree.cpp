@@ -149,7 +149,8 @@ uint64_t hashText(const std::wstring& text) {
 
 uint64_t dirId(const std::wstring& path) { return (1ull << 63) | hashText(path); }
 
-// The size and date of a clip's files (.MLV, .M00, .M01 ...): what tells a rebuild it changed.
+// The size and date of a clip's files (.MLV, .M00 ... .M98, as mlv::Clip opens them): what tells a
+// rebuild it changed.
 uint64_t clipSignature(const fs::path& mlv) {
     std::error_code ec;
     uint64_t h = 1469598103934665603ull;
@@ -167,7 +168,7 @@ uint64_t clipSignature(const fs::path& mlv) {
         return true;
     };
     add(mlv);
-    for (int n = 0; n < 100; ++n) {
+    for (int n = 0; n < 99; ++n) {
         wchar_t ext[8];
         std::swprintf(ext, 8, L".M%02d", n);
         fs::path chunk = mlv;
@@ -373,7 +374,9 @@ bool Tree::build(const std::vector<std::wstring>& folders, const BuildOptions& o
             entries[i] = openEntry(paths[i], keys[i], signatures[i], options, &why);
             if (!entries[i]) continue;
         }
-        entries[i]->name = name;
+        // Only a new entry gets its name: one taken over has it already, and the drive is reading
+        // it on other threads.
+        if (entries[i]->name != name) entries[i]->name = name;
         addClip(parent, entries[i]);
     }
     if (options.testPatterns) {

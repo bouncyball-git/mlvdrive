@@ -6,6 +6,7 @@
 #include "camid/camera_id.h"
 #include "liblj92/lj92.h"
 #include "mlv/clip.h"
+#include "mlv/color.h"
 #include "raw/rawfix.h"
 #include "util/file.h"
 
@@ -259,7 +260,9 @@ std::vector<uint8_t> generatedHeader(const GeneratedFrame& g) {
     return out;
 }
 
-size_t packBitsBigEndian(const uint16_t* in, int width, int height, int bits, std::vector<uint8_t>& out) {
+// Packs 16-bit values into a big-endian (most significant bit first) stream of `bits` per value,
+// each row starting on a byte. Returns the bytes written to `out` (resized).
+static size_t packBitsBigEndian(const uint16_t* in, int width, int height, int bits, std::vector<uint8_t>& out) {
     const size_t rowBytes = (size_t(width) * bits + 7) / 8;
     out.resize(rowBytes * height);
     const uint32_t mask = bits >= 16 ? 0xFFFFu : ((1u << bits) - 1);
@@ -347,13 +350,7 @@ void Writer::buildHeader(uint32_t frameIndex, size_t imageBytes, bool compressed
             focalY[1] *= 3;
         }
     }
-    if (options_.stretchNum > 0 && options_.stretchDen > 0) {
-        stretchNum = options_.stretchNum;
-        stretchDen = options_.stretchDen;
-    }
-    const int32_t hNum = options_.hStretchNum > 0 ? options_.hStretchNum : 1;
-    const int32_t hDen = options_.hStretchDen > 0 ? options_.hStretchDen : 1;
-    const int32_t defaultScale[4] = {hNum, hDen, stretchNum, stretchDen};
+    const int32_t defaultScale[4] = {1, 1, stretchNum, stretchDen};
 
     // --- Frame rate ---
     int32_t frameRate[2];
@@ -361,7 +358,7 @@ void Writer::buildHeader(uint32_t frameIndex, size_t imageBytes, bool compressed
     const double fps = double(frameRate[0]) / frameRate[1];
 
     // --- White balance ---
-    color::Vec3 mul = options_.customWhiteBalance ? options_.wbMultipliers : color::asShotMultipliers(c);
+    const color::Vec3 mul = color::asShotMultipliers(c);
     double neutral[3] = {1 / mul[0], 1 / mul[1], 1 / mul[2]};
     int32_t asShot[6];
     ToRationals(neutral, 3, 1000000, asShot);
@@ -551,10 +548,6 @@ bool Writer::renderFrame(uint32_t frameIndex, std::vector<uint8_t>& out, Scratch
 void Writer::frameRateRational(int32_t out[2]) const {
     out[0] = int32_t(clip_.mlvi.sourceFpsNom);
     out[1] = int32_t(clip_.mlvi.sourceFpsDenom ? clip_.mlvi.sourceFpsDenom : 1);
-    if (options_.fps > 0) {
-        out[0] = int32_t(std::lround(options_.fps * 1000));
-        out[1] = 1000;
-    }
 }
 
 double Writer::frameRate() const {

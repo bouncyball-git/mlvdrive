@@ -744,9 +744,7 @@ int readFolder(const Args& a) {
     return 0;
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
     if (argc < 2) return usage();
     Args a;
     if (!parseArgs(argc, argv, &a)) return usage();
@@ -765,3 +763,21 @@ int main(int argc, char** argv) {
     par::shutdown();
     return rc;
 }
+
+}  // namespace
+
+#ifdef _WIN32
+// The arguments as UTF-8, as the rest takes paths (main's are in the ANSI code page: a path
+// with characters outside it wouldn't open).
+int wmain(int argc, wchar_t** wargv) {
+    SetConsoleOutputCP(CP_UTF8);
+    std::vector<std::string> args;
+    for (int i = 0; i < argc; ++i) args.push_back(util::narrow(wargv[i]));
+    std::vector<char*> argv;
+    for (auto& s : args) argv.push_back(s.data());
+    argv.push_back(nullptr);
+    return run(argc, argv.data());
+}
+#else
+int main(int argc, char** argv) { return run(argc, argv); }
+#endif
