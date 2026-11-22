@@ -15,6 +15,11 @@
 // folders); a change rebuilds the tree from the one shown (unchanged clips taken over, their
 // frames still cached), the volume shows the new one, and its directory verifier moves on so
 // listings start again. `notifyutil -p org.mlvdrive.rescan` (`mlvdrive rescan`) rescans at once.
+// FSKit (macOS 26.5) has no way to tell the kernel what changed, and the kernel keeps the names it
+// has looked up and their attributes for good: listings are current, but a name looked up before
+// stays as it was (a clip replaced under its name: the old footage there; a name asked for before
+// it existed: not found) until the volume is mounted again. (Measured: nothing expired in 90 s;
+// ESTALE for such items reached programs as an error, the kernel didn't look again.)
 // -o watch=0 (or watch = false in the settings): no watching, only the notification.
 //
 // Items: the root is FSItemIDRootDirectory (2), a ".metadata_never_index" 3 (Spotlight would make

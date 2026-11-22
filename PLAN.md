@@ -493,8 +493,38 @@ in Resolve.
           1113 frames): every frame identical, both WAVs, the chart; reading in order
           unbuffered 445 frames/s first (1.8 GB/s, frames made from the clip; ~18x real time;
           Windows ~270), 1071 again. Not yet: Finder, Resolve, LJ92 clips, a spanned clip.
-     4. Watcher (FSEvents; `statfs` `MNT_LOCAL` for the 30 s polling), unmount / rescan from the
-        command line (a Unix socket or Darwin notifications in place of the named events).
+     4. Live folders and the command line (done):
+        - The module watches its folders (`app/folder_watcher`: FSEvents, a folder that comes
+          and goes looked for every 5 s, network folders (`statfs` without `MNT_LOCAL`) polled
+          every 30 s, a rescan 2 s after the last change, as on Windows). A rescan rebuilds the
+          tree from the one shown, forgets changed clips' frames, shows the new tree and moves
+          the directory verifier on. Plain folder items find their folder by path in the tree
+          shown now; a clip's items hold the clip (a file open keeps reading it).
+          `org.mlvdrive.rescan` (Darwin notification) rescans at once; `-o watch=0` watches
+          nothing.
+        - **FSKit's limit:** no way to tell the kernel what changed (26.5: nothing exported), and
+          the kernel keeps the names it looked up and their attributes for good (nothing expired
+          in 90 s; the folders' times aren't asked for again). Listings are current (the
+          verifier); a new name shows unless it was asked for before it existed; a name looked up
+          before keeps its first answer until the volume is mounted again (a clip replaced under
+          its name: the old footage there; deleted: still reachable by name, the old data).
+          ESTALE for such items reached programs as "Stale NFS file handle": not used. Adding
+          clips (the usual case) works; a refresh is a remount (the menu bar app's to offer).
+        - `mlvdrive` (`src/macos/mlvdrive_cli.cpp`, in `MLV Drive.app/Contents/MacOS`): `mount
+          [folder] [--mount-point=...] [--dng= --no-fix --timecode= --test-patterns --no-watch
+          --cache= --read-ahead=]` (no folder: the settings' folders), `unmount`, `rescan`. The
+          mount point defaults to `~/MLV Drive` (`drive =`): a user can't mount in /Volumes
+          (FSKit doesn't make the folder there either).
+        - Building: `bundle.sh` installs the binaries by rename (FSKit keeps the module running
+          after the last unmount; a binary overwritten in place under it was killed by code
+          signing), stops the old module when nothing is mounted (the next mount would run the
+          old code; a mount right after needs a moment), and signs ad hoc with identifier-based
+          designated requirements (an ad hoc signature's own is its hash: Full Disk Access was
+          lost at every build; now kept, after granting it once more).
+        - Checked (`tools/test-macos.sh`): a clip copied in listed after 1.9 s; replaced: the new
+          footage (64 -> 81 frames, frame 1 identical) while a file opened before reads the old;
+          deleted: gone from the listing after 1.7 s; watch=0: listed 0.1 s after `mlvdrive
+          rescan`.
      5. Menu bar app (AppKit, Objective-C++): the tray app's menu, `NSOpenPanel`,
         `SMAppService` (start at login), user notifications, open in Finder; template icon +
         `.icns` from `tools/make_icons.py`.

@@ -50,3 +50,11 @@ else
     codesign --force --sign "$IDENTITY" --options runtime "$APP"
 fi
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R "$APP"
+
+# FSKit keeps the module running after the last unmount, and the next mount would use that old
+# code: stopped here when nothing of ours is mounted (otherwise it serves until then).
+if ! mount | grep -q '(mlvdrive'; then
+    pkill -x MLVDriveFS 2>/dev/null && sleep 2 || true  # (FSKit takes a moment to notice)
+else
+    echo "bundle.sh: an MLV Drive volume is mounted: the module running keeps the old code until all are unmounted and it is stopped (pkill -x MLVDriveFS)"
+fi

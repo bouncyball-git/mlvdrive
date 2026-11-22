@@ -10,8 +10,9 @@
 #   wav        each clip's WAV identical to mlvdrive_tool wav
 #   patterns   a chart's image (TestPatterns frame 125, chart 2) equals mlvdrive_tool patterns'
 #   live       a watched folder (the two smallest clips, cloned): a clip copied in shows, one
-#              replaced under its name shows the new footage while a file opened before reads the
-#              old, one deleted goes
+#              replaced under its name shows the new footage (one not looked at before: FSKit
+#              can't tell the kernel to forget names) while a file opened before reads the old,
+#              one deleted goes from the listing
 #   rescan     not watched (-o watch=0): a clip shows only after `mlvdrive rescan`
 #   speed      the first clip read in order, unbuffered, twice (mlvdrive_tool read)
 #   unmount    umount lets go
@@ -124,29 +125,33 @@ wait_for() {  # seconds, test...: until the test passes; the seconds it took, or
     return 1
 }
 frames_in() { ls "$1" 2>/dev/null | grep -ci '\.dng$'; }
+# Checked by listing: FSKit can't tell the kernel what changed, so a name looked up before keeps
+# its first answer until the volume is mounted again (PLAN.md); listings are always current.
+listed() { ls "$1" 2>/dev/null | grep -qx "$2"; }
 if [ -n "$B" ]; then
     mkdir -p "$LIVE" "$LMNT" "$SCRATCH/keep"
     cp -c "$A" "$LIVE/LiveA.MLV"
+    cp -c "$A" "$LIVE/LiveD.MLV"          # replaced later, not looked at before
     cp -c "$A" "$SCRATCH/keep/LiveA.MLV"  # (to make its frames again after it is replaced)
     nA=$("$TOOL" info "$A" | awk '/^frames/ { print $2 }')
     nB=$("$TOOL" info "$B" | awk '/^frames/ { print $2 }')
     if mount -F -t mlvdrive "$LIVE" "$LMNT"; then
         cp -c "$B" "$LIVE/LiveB.MLV"
-        took=$(wait_for 15 test -d "$LMNT/LiveB") ; result live $? "a clip copied in shows ($took)"
+        took=$(wait_for 15 listed "$LMNT" LiveB); result live $? "a clip copied in shows ($took)"
         exec 3< "$LMNT/LiveA/LiveA_000001.dng"
         cp -c "$B" "$LIVE/LiveA.MLV.new" && mv -f "$LIVE/LiveA.MLV.new" "$LIVE/LiveA.MLV"
-        took=$(wait_for 15 test "$(frames_in "$LMNT/LiveA")" = "$nB")
-        result live $? "a clip replaced by other footage under its name: $nA -> $(frames_in "$LMNT/LiveA") frames ($took)"
+        cp -c "$B" "$LIVE/LiveD.MLV.new" && mv -f "$LIVE/LiveD.MLV.new" "$LIVE/LiveD.MLV"
+        sleep 4
         cat <&3 > "$SCRATCH/old.dng"
         exec 3<&-
         "$TOOL" dng "$SCRATCH/keep/LiveA.MLV" 1 "$SCRATCH/f.dng" > /dev/null 2>&1
         cmp -s "$SCRATCH/old.dng" "$SCRATCH/f.dng"
-        result live $? "a file opened before the change still reads the old footage"
-        "$TOOL" dng "$LIVE/LiveA.MLV" 1 "$SCRATCH/f.dng" > /dev/null 2>&1
-        cmp -s "$LMNT/LiveA/LiveA_000001.dng" "$SCRATCH/f.dng"
-        result live $? "the replaced clip's frame 1 is the new footage"
+        result live $? "a file opened before its clip was replaced still reads the old footage"
+        "$TOOL" dng "$LIVE/LiveD.MLV" 1 "$SCRATCH/f.dng" > /dev/null 2>&1
+        [ "$(frames_in "$LMNT/LiveD")" = "$nB" ] && cmp -s "$LMNT/LiveD/LiveD_000001.dng" "$SCRATCH/f.dng"
+        result live $? "a clip replaced under its name: the new footage ($nA -> $(frames_in "$LMNT/LiveD") frames, frame 1 identical)"
         rm "$LIVE/LiveB.MLV"
-        took=$(wait_for 15 test ! -d "$LMNT/LiveB"); result live $? "a clip deleted goes ($took)"
+        took=$(wait_for 15 sh -c "! ls '$LMNT' | grep -qx LiveB"); result live $? "a clip deleted goes from the listing ($took)"
         umount "$LMNT"
     else
         result live 1 "mount -F -t mlvdrive $LIVE failed"
@@ -155,11 +160,11 @@ if [ -n "$B" ]; then
     if mount -F -t mlvdrive -o watch=0 "$LIVE" "$LMNT"; then
         cp -c "$B" "$LIVE/LiveC.MLV"
         sleep 4
-        if [ -d "$LMNT/LiveC" ]; then
+        if listed "$LMNT" LiveC; then
             result rescan 1 "watch=0: a clip showed without a rescan"
         else
             "$CLI" rescan > /dev/null
-            took=$(wait_for 15 test -d "$LMNT/LiveC"); result rescan $? "watch=0: a clip shows after mlvdrive rescan ($took)"
+            took=$(wait_for 15 listed "$LMNT" LiveC); result rescan $? "watch=0: a clip shows after mlvdrive rescan ($took)"
         fi
         umount "$LMNT"
     else
