@@ -50,6 +50,11 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
 #endif
 
 namespace {
@@ -686,13 +691,25 @@ int64_t readWholeFile(const std::filesystem::path& path, uint8_t* buffer, size_t
     CloseHandle(h);
     return total;
 #else
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) return -1;
+#ifdef __APPLE__
+    if (!buffered) ::fcntl(fd, F_NOCACHE, 1);  // past the page cache: what the drive itself gives
+#else
     (void)buffered;
-    std::FILE* f = util::openFile(util::u8(path), "rb");
-    if (!f) return -1;
+#endif
     int64_t total = 0;
-    size_t got;
-    while ((got = std::fread(buffer, 1, size, f)) > 0) total += int64_t(got);
-    std::fclose(f);
+    for (;;) {
+        const ssize_t got = ::read(fd, buffer, size);
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            total = -1;
+            break;
+        }
+        if (got == 0) break;
+        total += got;
+    }
+    ::close(fd);
     return total;
 #endif
 }

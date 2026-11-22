@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <cwctype>
 #include <filesystem>
 #include <mutex>
@@ -14,6 +16,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/stat.h>
 #endif
 
 namespace vfs {
@@ -44,11 +48,20 @@ bool isMlv(const fs::path& p) {
     return compareNames(ext, L".mlv") == 0;
 }
 
+#ifndef _WIN32
+// Unix time (seconds and nanoseconds since 1970, UTC) as a FILETIME.
+uint64_t fromUnix(int64_t seconds, int64_t nanoseconds) {
+    constexpr int64_t kEpochDiff = 11644473600;  // seconds from 1601-01-01 to 1970-01-01
+    if (seconds < -kEpochDiff) return 0;
+    return uint64_t(seconds + kEpochDiff) * 10000000u + uint64_t(nanoseconds / 100);
+}
+#endif
+
 // A clip's recording time (RTCI, the camera's local time) as a FILETIME, or 0 without one.
 uint64_t recordingTime(const mlv::Clip& clip) {
-#ifdef _WIN32
     const auto& r = clip.rtci;
     if (r.type[0] == 0 || r.tm_year < 70) return 0;
+#ifdef _WIN32
     SYSTEMTIME local{};
     local.wYear = WORD(1900 + r.tm_year);
     local.wMonth = WORD(r.tm_mon + 1);
@@ -61,8 +74,16 @@ uint64_t recordingTime(const mlv::Clip& clip) {
     if (!TzSpecificLocalTimeToSystemTime(nullptr, &local, &utc) || !SystemTimeToFileTime(&utc, &ft)) return 0;
     return uint64_t(ft.dwHighDateTime) << 32 | ft.dwLowDateTime;
 #else
-    (void)clip;
-    return 0;
+    std::tm local{};
+    local.tm_year = r.tm_year;
+    local.tm_mon = r.tm_mon;
+    local.tm_mday = r.tm_mday;
+    local.tm_hour = r.tm_hour;
+    local.tm_min = r.tm_min;
+    local.tm_sec = r.tm_sec;
+    local.tm_isdst = -1;  // as the time zone had it on that day
+    const std::time_t t = std::mktime(&local);
+    return t == std::time_t(-1) ? 0 : fromUnix(int64_t(t), 0);
 #endif
 }
 
@@ -73,8 +94,13 @@ uint64_t fileTime(const fs::path& p) {
     if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &data)) return 0;
     return uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32 | data.ftLastWriteTime.dwLowDateTime;
 #else
-    (void)p;
-    return 0;
+    struct stat st;
+    if (::stat(p.c_str(), &st) != 0) return 0;
+#ifdef __APPLE__
+    return fromUnix(int64_t(st.st_mtimespec.tv_sec), int64_t(st.st_mtimespec.tv_nsec));
+#else
+    return fromUnix(int64_t(st.st_mtim.tv_sec), int64_t(st.st_mtim.tv_nsec));
+#endif
 #endif
 }
 
@@ -84,7 +110,9 @@ uint64_t now() {
     GetSystemTimeAsFileTime(&ft);
     return uint64_t(ft.dwHighDateTime) << 32 | ft.dwLowDateTime;
 #else
-    return 0;
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+    return fromUnix(int64_t(ns / 1000000000), int64_t(ns % 1000000000));
 #endif
 }
 

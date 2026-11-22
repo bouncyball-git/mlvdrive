@@ -1,4 +1,5 @@
-// The drive's settings, kept in %APPDATA%\MLV Drive\mlvdrive.ini (UTF-8):
+// The drive's settings, kept in %APPDATA%\MLV Drive\mlvdrive.ini (UTF-8; macOS:
+// ~/Library/Application Support/MLV Drive/mlvdrive.ini, Linux: ~/.config/mlvdrive/mlvdrive.ini):
 //
 //   [mount]
 //   folder = E:\mlv            ; an MLV folder (clips in its subfolders too); one line each,
@@ -45,7 +46,8 @@ struct Settings {
     int readAhead = -1;  // -1: one per CPU
 };
 
-// %APPDATA%\MLV Drive\mlvdrive.ini
+// %APPDATA%\MLV Drive\mlvdrive.ini (macOS: ~/Library/Application Support/MLV Drive/mlvdrive.ini,
+// Linux: ~/.config/mlvdrive/mlvdrive.ini)
 std::wstring settingsPath();
 
 // The settings in `path` over the defaults (a missing file: the defaults). Unknown keys are

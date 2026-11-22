@@ -13,8 +13,8 @@ E:\mlv\M21-1642.MLV  ──mount──►  M:\M21-1642\M21-1642_000000.dng
 
 It is a new program, in the spirit of MLVFS (David Milligan, 2014-2016) but not an upgrade of
 it: MLVFS's filesystem layers (FUSE 2.6, Pismo File Mount, Dokan 1.0), its frame lookup, decoder,
-caching and web GUI are all replaced. **Windows first** (WinFsp); Linux (FUSE 3) and macOS
-(macFUSE / FSKit) later.
+caching and web GUI are all replaced. **Windows first** (WinFsp), then **macOS 26+ on FSKit**
+(Apple's own file system extensions: no macFUSE, no libfuse); Linux (FUSE 3) later.
 
 ## Ground rules
 
@@ -33,7 +33,9 @@ caching and web GUI are all replaced. **Windows first** (WinFsp); Linux (FUSE 3)
 - Licence: GPL-3.0 (compatible with MLV-App GPL-3.0 and MLVFS GPL-2.0-or-later).
 - C++17, CMake + Ninja, MSVC (Visual Studio 2022 Build Tools are installed at
   `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools`), static runtime
-  (`/MT`), LF line endings.
+  (`/MT`), LF line endings. macOS: Apple clang (the system's libc++; no static runtime there),
+  Objective-C++ for the FSKit and AppKit layers (no Swift: FSKit modules can be pure
+  Objective-C, as Apple's own are).
 - After every change, suggest a commit message; don't commit unless asked (see `CLAUDE.md`).
 
 ## What to copy in (step 1)
@@ -369,7 +371,107 @@ in Resolve.
      the first; the harness then found a null-pointer crash for a stream without a Huffman
      table (now refused); the final code has no memory errors. Every LJ92 change:
      `third_party/mlvapp/liblj92/lj92_changes.md`. test.ps1: 20 of 20.
-8. Later: Linux (FUSE 3), macOS (macFUSE or FSKit).
+8. **macOS 26+, native FSKit** (in progress). Pure macOS: an FSKit file system extension, no
+   macFUSE / libfuse, macOS 26 or later (folder-backed volumes, `FSPathURLResource`, are new in
+   26). It must be very fast: FSKit takes every request from the kernel to our extension process
+   by IPC, so the design keeps round trips few and cheap and never blocks them on a decode.
+   - Found (Apple Silicon, macOS 26.5, Apple clang): the core already builds as it is
+     (`mlvapp_c`, `mlv_core`, `mlv_vfs`, `mlvdrive_tool`); `selftest` passes on a 5D Mark III
+     1080p uncompressed clip; a whole 16-bit DNG 1.73 ms on one thread (corrections 1.21 of it:
+     scalar, no SIMD on ARM), 2,408 frames/s on 10 threads.
+   - **Layout:**
+     ```
+     MLV Drive.app (menu bar app, LSUIElement): settings, folder picker, mount / unmount
+      └─ Contents/Extensions/MLVDriveFS.appex   the FSKit module; the engine runs in it
+          ├─ src/fs/fskit_*.mm   Objective-C++: FSUnaryFileSystem + FSVolume (entry point
+          │                      NSExtensionMain, principal class from the Info.plist)
+          ├─ mlv_core, mlv_vfs   (as on Windows: tree, frame cache, read-ahead)
+          └─ FSEvents watcher (live folders)
+     ```
+     `mlvdrive mount` becomes a front end to `/sbin/mount -F -t mlvdrive`; `mlvdrive_tool`
+     stays as it is.
+   - **Speed rules:**
+     - No Swift on the read path: `FSMutableFileDataBuffer -mutableBytes` takes the DNG bytes
+       straight from the frame cache (one copy, as on WinFsp).
+     - Reads answered asynchronously: `readFromFile:` returns at once, the reply comes from the
+       cache worker when the frame is made (FSKit's threads never wait on a decode; many reads
+       in flight, read-ahead as on Windows).
+     - Large I/O: `FSStatFSResult.ioSize` a large multiple of `blockSize` (1-4 MB: measure), so a
+       4 MB DNG is 1-4 round trips.
+     - Cheap metadata: the 26.5 SDK has no lookup / attribute cache timeouts, so every stat may
+       reach us. One `FSItem` per node kept by id (`ClipEntry::id`, never reused; freed in
+       `reclaimItem`); `enumerateDirectory` packs attributes with each entry (no getattr per
+       file for a 1500-DNG folder).
+     - Workers at QoS user-initiated (`pthread_set_qos_class_self_np`): on the performance cores,
+       not left on the efficiency cores.
+     - NEON stripe correction (the SSE4.1 one's twin; selftest compares it with the scalar).
+     - Open / close: measure with and without (`openCloseInhibited`: two round trips fewer a
+       file; the frame cache keeps frames alive instead of the open file).
+     - Never a 0-byte read reply before the end of a file (an FSKit data corruption with empty
+       replies on macOS 26/27, reported by macFUSE).
+     - `.metadata_never_index` at the root (Spotlight would make every frame); Finder's `._*`,
+       `.DS_Store`, extended attributes answered "none" at once.
+   - **Limits found in the 26.5 SDK:** no change notification to the kernel (live folders: a new
+     directory verifier, so listings are read again; changed clips get new ids, so new items);
+     one resource per mount (an `FSPathURLResource`, may be security-scoped) while a mount merges
+     several folders, often on several disks: how the sandboxed extension reads the others is the
+     main open question.
+   - **How a module is made** (from Apple's own on macOS 26.5: exfat, msdos, ftp): pure
+     Objective-C, `main` = `NSExtensionMain`, `EXExtensionPrincipalClass` in
+     `EXAppExtensionAttributes` (extension point `com.apple.fskit.fsmodule`, `FSShortName`,
+     `FSSupportsPathURLs`, `FSRequiresSecurityScopedPathURLResources`,
+     `FSSupportsGenericURLResources` + `FSSupportedSchemes`). Built with clang alone (no Xcode).
+   - **Runs ad hoc signed, without an Apple certificate** (checked with the probe):
+     - Signing: the app sandbox as the only entitlement. `com.apple.developer.fskit.fsmodule` is
+       restricted: AMFI kills an ad hoc signed binary carrying it ("adhoc signed but contains
+       restricted entitlements"); FSKit runs the module without it.
+     - Turning it on: the host app opened once (registers the extension), then System Settings
+       quit and reopened: the module is listed under General > Login Items & Extensions > File
+       System Extensions, turned on there (`pluginkit -e use` isn't enough: `mount` says "Module
+       ... is disabled!"). `FSClient fetchInstalledExtensions` is no test: it lists only the
+       system's own modules.
+     - A new bundle (deleted and made again) is a new registration, turned off: the build
+       updates it in place and registers it (`lsregister -f`).
+     - `mount -F -t mlvprobe <folder> <mount point>` mounts it as a user (no sudo; `fskit` in
+       `mount`'s list); `umount` unmounts.
+     - First read (probe defaults: async replies, 1 MB `ioSize`): 1000 files of 4 MB
+       byte-correct, 233 files/s (~970 MB/s), one reader.
+   - **Open:** the sandboxed extension couldn't list the folder it was mounted from ("Operation
+     not permitted", not security-scoped): reading the MLV files is the question now
+     (`FSRequiresSecurityScopedPathURLResources`, a security-scoped URL from the app, entitlements).
+     Mount options given with `-o` didn't reach `loadResource`: the probe now logs where they
+     arrive (load, mount, activate).
+   - Reference: APFS on this Mac's SSD reads 4 MB files at ~2,000 MB/s (2.0 ms a file,
+     `mlvdrive_tool read`, unbuffered: now `F_NOCACHE`, POSIX reads, outside Windows).
+   - **Portability fixes in the core** (outside Windows these compiled but were wrong): dates were
+     0 (`tree.cpp`: recording time, file time, now); `cache_mb = auto` was always 512 MB
+     (`settings.cpp`: now `hw.memsize`); settings in `~/Library/Application Support/MLV Drive/`
+     (Linux: `~/.config/mlvdrive/`); pixel maps also beside the program and in the app bundle's
+     `Resources/pixelmaps`.
+   - **Steps:**
+     1. Portability fixes (above). Done: checked on two clips (RTCI and file dates right, folder
+        dates their newest clip's), 16 GB RAM -> 4096 MB cache, the paths.
+     2. Probe (`macos/probe`, a throwaway module): runs (above); next the options, the folder
+        access, then `macos/probe/run.sh sweep`: a read-only FSKit volume of fake 4 MB files
+        made in memory. Measure files/s and MB/s reading in order (Windows: ~270 frames/s,
+        ~1.1 GB/s), with `ioSize` 256 KB-4 MB, worker QoS, open/close on and off; and check that
+        the sandboxed extension can read a second folder on another disk. Too slow: learnt
+        before the port.
+     3. `src/fs/fskit_*`: the real volume on `vfs::Tree` and the frame cache; checked against
+        `mlvdrive_tool dng` byte for byte, as the WinFsp mount was.
+     4. Watcher (FSEvents; `statfs` `MNT_LOCAL` for the 30 s polling), unmount / rescan from the
+        command line (a Unix socket or Darwin notifications in place of the named events).
+     5. Menu bar app (AppKit, Objective-C++): the tray app's menu, `NSOpenPanel`,
+        `SMAppService` (start at login), user notifications, open in Finder; template icon +
+        `.icns` from `tools/make_icons.py`.
+     6. Build: CMake + Ninja for the code, a script assembling and signing the `.app` / `.appex`
+        (entitlements); universal (arm64 + x86_64); Developer ID, notarization, a DMG.
+        `tools/test.ps1`'s checks for macOS.
+     7. Resolve on the Mac.
+   - **Needs:** nothing for development (ad hoc, above). For release: a Developer ID and
+     notarization (Apple Developer Program), or Gatekeeper asks once. Xcode isn't needed to build
+     (the Command Line Tools have the macOS 26.5 SDK with FSKit).
+9. Later: Linux (FUSE 3).
 
 **Resolve, later** (when the user wants to run it): import `M:\<clip>` as one clip with the
 right frame rate and duration, CinemaDNG raw controls, playback in real time; then the open

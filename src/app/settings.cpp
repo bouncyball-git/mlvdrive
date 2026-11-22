@@ -13,6 +13,10 @@
 #ifdef _WIN32
 #include <shlobj.h>
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <sys/sysctl.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace app {
@@ -49,6 +53,13 @@ unsigned cacheAutoMb() {
     MEMORYSTATUSEX m{};
     m.dwLength = sizeof m;
     if (GlobalMemoryStatusEx(&m)) total = m.ullTotalPhys;
+#elif defined(__APPLE__)
+    uint64_t bytes = 0;
+    size_t size = sizeof bytes;
+    if (sysctlbyname("hw.memsize", &bytes, &size, nullptr, 0) == 0) total = bytes;
+#else
+    const long pages = sysconf(_SC_PHYS_PAGES), pageSize = sysconf(_SC_PAGE_SIZE);
+    if (pages > 0 && pageSize > 0) total = uint64_t(pages) * uint64_t(pageSize);
 #endif
     const uint64_t mb = (total >> 20) / 4;
     return unsigned(std::clamp<uint64_t>(mb, 512, 16384));
@@ -68,6 +79,9 @@ std::wstring settingsPath() {
     CoTaskMemFree(appData);
     if (path.empty()) path = L".";
     return path + L"\\MLV Drive\\mlvdrive.ini";
+#elif defined(__APPLE__)
+    const char* home = std::getenv("HOME");
+    return Wide(std::string(home ? home : ".") + "/Library/Application Support/MLV Drive/mlvdrive.ini");
 #else
     const char* home = std::getenv("HOME");
     return Wide(std::string(home ? home : ".") + "/.config/mlvdrive/mlvdrive.ini");

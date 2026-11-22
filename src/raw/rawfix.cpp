@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <random>
 #include <thread>
@@ -15,6 +16,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
 #endif
 
 // SSE4.1 for the stripe correction on x86 (checked at run time; the scalar code otherwise).
@@ -315,7 +318,26 @@ std::vector<std::string> defaultPixelMapFolders() {
     const DWORD n = GetModuleFileNameW(nullptr, exe, DWORD(std::size(exe)));
     if (n > 0) folders.push_back(util::u8(std::filesystem::path(std::wstring(exe, n)).parent_path() / L"pixelmaps"));
 #else
+    namespace fs = std::filesystem;
+    std::error_code ec;
+#ifdef __APPLE__
+    if (const char* home = std::getenv("HOME"))
+        folders.push_back(std::string(home) + "/Library/Application Support/MLV Drive/pixelmaps");
+    std::string exe(4096, '\0');
+    uint32_t size = uint32_t(exe.size());
+    if (_NSGetExecutablePath(exe.data(), &size) != 0) exe.clear();
+    else exe.resize(std::strlen(exe.c_str()));
+#else
     if (const char* home = std::getenv("HOME")) folders.push_back(std::string(home) + "/.config/mlvdrive/pixelmaps");
+    std::string exe = fs::read_symlink("/proc/self/exe", ec).string();
+#endif
+    if (!exe.empty()) {
+        const fs::path dir = fs::weakly_canonical(fs::path(exe), ec).parent_path();
+        folders.push_back((dir / "pixelmaps").string());
+#ifdef __APPLE__
+        folders.push_back((dir.parent_path() / "Resources" / "pixelmaps").string());  // in an app bundle
+#endif
+    }
 #endif
     return folders;
 }
