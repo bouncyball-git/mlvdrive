@@ -471,8 +471,28 @@ in Resolve.
      2. Probe (`macos/probe`, a throwaway FSKit volume of fake 4 MB files made in memory).
         Done (above): runs ad hoc, reads any folder with Full Disk Access, 4-12 GB/s. Not
         measured: open / close calls (can't be switched by mount options).
-     3. `src/fs/fskit_*`: the real volume on `vfs::Tree` and the frame cache; checked against
-        `mlvdrive_tool dng` byte for byte, as the WinFsp mount was.
+     3. The drive (done): `src/fs/fskit_fs.mm` in `MLV Drive.app` (`src/macos`: a minimal host
+        app for now, plists, entitlements, `bundle.sh`: CMake assembles, signs ad hoc and
+        registers the app after every build, in place so the Settings switch stays on).
+        - `mount -F -t mlvdrive <folder> <mount point>`, `umount`. The folder is the MLV folder;
+          MLV Drive's settings folder means the settings' folders. Settings from the file
+          (`util::homeFolder()`: the sandbox's `$HOME` is its container), `-o format=,
+          raw_fixes=, timecode=, test_patterns=, cache_mb=, read_ahead=` over them; the clips
+          are opened at `activate` (where the options arrive).
+        - One `FSItem` per id (root 2, `.metadata_never_index` 3, plain folders their tree id,
+          clip folders / frames / WAV the clip's ids + 16), dropped at `reclaimItem`; attributes
+          packed with `enumerateDirectory`; reads on a user-initiated queue: a read within the
+          header makes the header alone, anything further the DNG through the frame cache
+          (read-ahead); no 0-byte reply before the end of a file.
+        - The user, once: turn "MLV Drive" on (File System Extensions), Full Disk Access for
+          MLV Drive.app (macOS adds the app to that list, switched off, at its first refused read).
+        - `tools/test-macos.sh <folder> [--all]`: mount with the test patterns, frames in random
+          order byte-identical to `mlvdrive_tool dng`, WAVs to `mlvdrive_tool wav`, chart 2 to
+          `mlvdrive_tool patterns`, read speed, unmount.
+        - Checked (M4 Mac mini, the 4 Desktop clips: 5D Mark III 1080p uncompressed 14-bit,
+          1113 frames): every frame identical, both WAVs, the chart; reading in order
+          unbuffered 445 frames/s first (1.8 GB/s, frames made from the clip; ~18x real time;
+          Windows ~270), 1071 again. Not yet: Finder, Resolve, LJ92 clips, a spanned clip.
      4. Watcher (FSEvents; `statfs` `MNT_LOCAL` for the 30 s polling), unmount / rescan from the
         command line (a Unix socket or Darwin notifications in place of the named events).
      5. Menu bar app (AppKit, Objective-C++): the tray app's menu, `NSOpenPanel`,
