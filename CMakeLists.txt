@@ -108,9 +108,10 @@ if(WIN32)
 elseif(APPLE)
     enable_language(OBJCXX)
     # The FSKit module: the drive's engine runs in it (an app extension, MLVDriveFS.appex).
-    add_executable(MLVDriveFS src/fs/fskit_fs.mm src/app/settings.cpp)
+    add_executable(MLVDriveFS src/fs/fskit_fs.mm src/app/settings.cpp src/app/folder_watcher_mac.cpp)
     target_compile_options(MLVDriveFS PRIVATE -fobjc-arc -Wall -Wextra -Wno-unused-parameter)
-    target_link_libraries(MLVDriveFS PRIVATE mlv_vfs "-framework Foundation" "-framework FSKit")
+    target_link_libraries(MLVDriveFS PRIVATE mlv_vfs "-framework Foundation" "-framework FSKit"
+                                             "-framework CoreServices")
 
     # MLV Drive.app: carries the module (for now a minimal app; the menu bar app comes later).
     add_executable(mlvdrive_host src/macos/host_main.mm)
@@ -118,10 +119,15 @@ elseif(APPLE)
     target_compile_options(mlvdrive_host PRIVATE -fobjc-arc)
     target_link_libraries(mlvdrive_host PRIVATE "-framework Foundation")
 
+    # mlvdrive: mounts, unmounts and rescans from the command line (in MLV Drive.app/Contents/MacOS).
+    add_executable(mlvdrive src/macos/mlvdrive_cli.cpp src/app/settings.cpp)
+    target_compile_options(mlvdrive PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    target_link_libraries(mlvdrive PRIVATE mlv_vfs)
+
     # Assembled, signed (ad hoc, or $SIGN_IDENTITY) and registered after every build.
     add_custom_target(mlvdrive_bundle ALL
         COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/bundle.sh" "${CMAKE_BINARY_DIR}" "${PROJECT_VERSION}"
-        DEPENDS MLVDriveFS mlvdrive_host
+        DEPENDS MLVDriveFS mlvdrive_host mlvdrive
         COMMENT "Assembling MLV Drive.app")
 endif()
 

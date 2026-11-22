@@ -213,7 +213,11 @@ bool saveSettings(const std::wstring& path, const Settings& s, std::string* erro
     if (s.folders.empty()) line("folder", "", "an MLV folder; one line each, merged on the drive");
     for (size_t i = 0; i < s.folders.size(); ++i)
         line("folder", Utf8(s.folders[i]), i == 0 ? "an MLV folder; one line each, merged on the drive" : nullptr);
+#ifdef __APPLE__
+    line("drive", Utf8(s.drive), "the mount point (~ is the home folder)");
+#else
     line("drive", Utf8(s.drive), "empty: the next free letter from Z: down");
+#endif
     line("test_patterns", s.testPatterns ? "true" : "false");
     line("mount_at_start", s.mountAtStart ? "true" : "false", "the tray app mounts when it starts");
     line("watch", s.watch ? "true" : "false", "show clips added or changed in the folders as it happens");

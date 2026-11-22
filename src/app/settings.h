@@ -4,7 +4,8 @@
 //   [mount]
 //   folder = E:\mlv            ; an MLV folder (clips in its subfolders too); one line each,
 //   folder = G:\mlv            ; their clips merged on the drive
-//   drive = M:                 ; empty: the next free letter from Z: down
+//   drive = M:                 ; empty: the next free letter from Z: down (macOS: the mount
+//                              ; point, default ~/MLV Drive)
 //   test_patterns = false      ; add the TestPatterns folder
 //   mount_at_start = true      ; the tray app mounts when it starts
 //   watch = true               ; show clips added, removed or changed in the folders as it happens
@@ -34,7 +35,11 @@ namespace app {
 
 struct Settings {
     std::vector<std::wstring> folders;  // the MLV folders, merged on the drive
+#ifdef __APPLE__
+    std::wstring drive = L"~/MLV Drive";  // the mount point (`drive =`; ~ is the home folder)
+#else
     std::wstring drive = L"M:";
+#endif
     bool testPatterns = false;
     bool mountAtStart = true;
     bool watch = true;

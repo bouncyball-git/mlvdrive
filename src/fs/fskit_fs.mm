@@ -11,10 +11,18 @@
 // test_patterns=1|0, cache_mb=N, read_ahead=N. FSKit passes the options with activate, so the
 // clips are opened there.
 //
+// Live folders: the folders are watched (app::FolderWatcher: FSEvents, polling for network
+// folders); a change rebuilds the tree from the one shown (unchanged clips taken over, their
+// frames still cached), the volume shows the new one, and its directory verifier moves on so
+// listings start again. `notifyutil -p org.mlvdrive.rescan` (`mlvdrive rescan`) rescans at once.
+// -o watch=0 (or watch = false in the settings): no watching, only the notification.
+//
 // Items: the root is FSItemIDRootDirectory (2), a ".metadata_never_index" 3 (Spotlight would make
 // every frame); a plain folder keeps its tree id (top bit set); a clip's folder, frames and WAV
 // are its ids (ClipEntry::id: folder id, frame N id + 1 + N, WAV id + 1 + frame count) + 16.
-// One FSItem per id, kept until FSKit reclaims it.
+// One FSItem per id, kept until FSKit reclaims it. A plain folder's item finds its folder by path
+// in the tree shown now (gone: empty); a clip's items hold the clip, so a file open while its clip
+// changes keeps reading the clip it was opened in.
 //
 // Reads are answered on a queue of their own (user-initiated QoS: the performance cores), never
 // on FSKit's thread: a read within a DNG's header makes the header alone, anything further the
@@ -23,16 +31,19 @@
 #import <Foundation/Foundation.h>
 #import <os/log.h>
 
+#include "app/folder_watcher.h"
 #include "app/settings.h"
 #include "raw/rawfix.h"
 #include "util/file.h"
 #include "vfs/frame_cache.h"
 #include "vfs/tree.h"
 
+#include <notify.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -40,6 +51,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -50,10 +62,10 @@ namespace {
 constexpr uint64_t kRootId = FSItemIDRootDirectory;  // 2
 constexpr uint64_t kNeverIndexId = 3;
 constexpr uint64_t kClipOffset = 16;  // clip ids start at 1: kept clear of FSKit's and ours above
-constexpr FSDirectoryVerifier kVerifier = 1;  // the tree doesn't change while mounted
 constexpr NSInteger kBlockSize = 4096;
 constexpr NSInteger kIoSize = 1 << 20;  // measured: 1-4 MB alike, 256 KB a little slower
 const char kNeverIndex[] = ".metadata_never_index";
+const char kRescanNotification[] = "org.mlvdrive.rescan";
 
 os_log_t Log() {
     static os_log_t log = os_log_create("org.mlvdrive.fs", "drive");
@@ -78,7 +90,7 @@ struct Node {
     enum Kind { Folder, ClipFolder, Frame, Audio, NeverIndex } kind = Folder;
     uint64_t id = 0;
     uint64_t parentId = 0;
-    const vfs::Dir* dir = nullptr;                // Folder (plain), ClipFolder: its Dir in the tree
+    std::wstring path;                            // Folder, ClipFolder: in the tree ("" the root, "\a\b")
     std::shared_ptr<const vfs::ClipEntry> clip;   // ClipFolder, Frame, Audio
     uint32_t frame = 0;
     bool isDirectory() const { return kind == Folder || kind == ClipFolder; }
@@ -86,12 +98,12 @@ struct Node {
 
 uint64_t idOf(const vfs::Dir& d) { return d.clip ? d.clip->id + kClipOffset : d.id; }
 
-Node childFolder(const vfs::Dir& d, uint64_t parentId) {
+Node childFolder(const vfs::Dir& d, const Node& parent) {
     Node n;
     n.kind = d.clip ? Node::ClipFolder : Node::Folder;
     n.id = idOf(d);
-    n.parentId = parentId;
-    n.dir = &d;
+    n.parentId = parent.id;
+    n.path = parent.path + L"\\" + d.name;
     n.clip = d.clip;
     return n;
 }
@@ -128,6 +140,7 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
             else if (k == "test_patterns") s->testPatterns = on;
             else if (k == "cache_mb") s->cacheMb = unsigned(std::clamp<unsigned long>(std::strtoul(v.c_str(), nullptr, 10), 16, 1ul << 20));
             else if (k == "read_ahead") s->readAhead = int(std::min<unsigned long>(std::strtoul(v.c_str(), nullptr, 10), 256));
+            else if (k == "watch") s->watch = on;
         }
     }
 }
@@ -153,8 +166,13 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
 
 @implementation MLVVolume {
     app::Settings _settings;
-    std::shared_ptr<vfs::Tree> _tree;
+    std::mutex _treeMutex;
+    std::shared_ptr<const vfs::Tree> _tree;  // the one shown now (a rescan replaces it)
+    std::atomic<uint64_t> _generation;       // the directory verifier: moves on with each new tree
+    std::mutex _rescanMutex;                 // one rescan at a time
     std::unique_ptr<vfs::FrameCache> _cache;
+    std::unique_ptr<app::FolderWatcher> _watcher;
+    int _notifyToken;
     std::mutex _itemsMutex;
     std::unordered_map<uint64_t, MLVItem*> _items;  // handed to FSKit and not reclaimed yet
     MLVItem* _root;
@@ -175,7 +193,52 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
                                    dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT,
                                                                            QOS_CLASS_USER_INITIATED, 0));
     clock_gettime(CLOCK_REALTIME, &_mounted);
+    _generation = 1;
+    _notifyToken = NOTIFY_TOKEN_INVALID;
     return self;
+}
+
+- (std::shared_ptr<const vfs::Tree>)current {
+    std::lock_guard<std::mutex> lock(_treeMutex);
+    return _tree;
+}
+
+// Looks at the folders again: a new tree from the one shown (unchanged clips taken over), the
+// frames of clips changed or gone forgotten, then shown.
+- (void)rescan {
+    std::lock_guard<std::mutex> rescanLock(_rescanMutex);
+    const std::shared_ptr<const vfs::Tree> before = [self current];
+    if (!before || !_cache) return;
+    auto next = std::make_shared<vfs::Tree>();
+    std::string error;
+    size_t skipped = 0;
+    if (!next->build(_settings.folders, app::buildOptions(_settings),
+                     [&](const std::string& m) {
+                         ++skipped;
+                         os_log_error(Log(), "%{public}s", m.c_str());
+                     },
+                     &error, before.get())) {
+        os_log_error(Log(), "rescan: %{public}s", error.c_str());
+        return;
+    }
+    std::map<std::wstring, uint64_t> was, now;
+    for (const auto& c : before->clips()) was[c->sourceKey] = c->id;
+    for (const auto& c : next->clips()) now[c->sourceKey] = c->id;
+    size_t added = 0, removed = 0, changed = 0;
+    for (const auto& [key, id] : was) {
+        auto it = now.find(key);
+        if (it == now.end()) ++removed;
+        else if (it->second != id) ++changed;
+        if (it == now.end() || it->second != id) _cache->forget(id);  // its frames won't be asked for again
+    }
+    for (const auto& [key, id] : now)
+        if (!was.count(key)) ++added;
+    {
+        std::lock_guard<std::mutex> lock(_treeMutex);
+        _tree = std::move(next);
+    }
+    if (added || removed || changed) ++_generation;
+    os_log(Log(), "rescanned: %zu added, %zu removed, %zu changed, %zu skipped", added, removed, changed, skipped);
 }
 
 // Finds and opens the clips (with the options given to mount).
@@ -200,16 +263,29 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
     const unsigned readAhead = _settings.readAhead < 0 ? cpus : unsigned(_settings.readAhead);
     const unsigned cacheMb = _settings.cacheMb ? _settings.cacheMb : app::cacheAutoMb();
     _cache = std::make_unique<vfs::FrameCache>(uint64_t(cacheMb) << 20, readAhead ? cpus : 0, readAhead);
-    _tree = std::move(tree);
+    const size_t clips = tree->clipCount();
+    const double gb = double(tree->totalBytes()) / 1e9;
+    {
+        std::lock_guard<std::mutex> lock(_treeMutex);
+        _tree = std::move(tree);
+    }
     Node root;
     root.kind = Node::Folder;
     root.id = kRootId;
     root.parentId = FSItemIDParentOfRoot;
-    root.dir = &_tree->root();
     _root = [self itemFor:root];
+    __weak MLVVolume* weakSelf = self;
+    _watcher = std::make_unique<app::FolderWatcher>(_settings.folders, _settings.watch, [weakSelf] {
+        [weakSelf rescan];
+    });
+    app::FolderWatcher* watcher = _watcher.get();
+    notify_register_dispatch(kRescanNotification, &_notifyToken, _reads, ^(int) {
+        watcher->rescanNow();
+    });
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    os_log(Log(), "mounted: %zu clips, %.1f GB of DNG, opened in %.0f ms; cache %u MB, read-ahead %u",
-           _tree->clipCount(), double(_tree->totalBytes()) / 1e9, ms, cacheMb, readAhead);
+    os_log(Log(), "mounted: %zu clips, %.1f GB of DNG, opened in %.0f ms; cache %u MB, read-ahead %u%s", clips, gb,
+           ms, cacheMb, readAhead,
+           !_settings.watch ? "" : _watcher->polling() ? "; watching, network folders polled" : "; watching");
     return nil;
 }
 
@@ -237,7 +313,12 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
             a.type = FSItemTypeDirectory;
             a.mode = S_IFDIR | 0555;
             a.linkCount = 2;
-            time = n.kind == Node::ClipFolder ? n.clip->time : n.dir->time;
+            if (n.kind == Node::ClipFolder) {
+                time = n.clip->time;
+            } else if (const auto tree = [self current]) {
+                const vfs::Node d = tree->find(n.path.c_str());
+                if (d.kind == vfs::Node::Directory) time = d.dir->time;
+            }
             break;
         case Node::Frame:
             a.type = FSItemTypeFile;
@@ -274,8 +355,11 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
 - (std::vector<Node>)childrenOf:(const Node&)dir {
     std::vector<Node> out;
     if (dir.kind == Node::Folder) {
-        out.reserve(dir.dir->dirs.size());
-        for (const auto& d : dir.dir->dirs) out.push_back(childFolder(*d, dir.id));
+        const auto tree = [self current];
+        const vfs::Node d = tree ? tree->find(dir.path.c_str()) : vfs::Node{};
+        if (d.kind != vfs::Node::Directory) return out;  // gone since
+        out.reserve(d.dir->dirs.size());
+        for (const auto& sub : d.dir->dirs) out.push_back(childFolder(*sub, dir));
     } else if (dir.kind == Node::ClipFolder) {
         const uint32_t frames = dir.clip->source->frameCount();
         out.reserve(frames + 1);
@@ -288,7 +372,7 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
 - (std::string)nameOf:(const Node&)n {
     switch (n.kind) {
         case Node::Folder:
-        case Node::ClipFolder: return util::narrow(n.dir->name);
+        case Node::ClipFolder: return util::narrow(n.path.substr(n.path.rfind(L'\\') + 1));
         case Node::Frame: return util::narrow(vfs::Tree::frameName(*n.clip, n.frame));
         case Node::Audio: return util::narrow(vfs::Tree::wavName(*n.clip));
         case Node::NeverIndex: return kNeverIndex;
@@ -322,10 +406,11 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
     FSStatFSResult* r = [[FSStatFSResult alloc] initWithFileSystemTypeName:@"mlvdrive"];
     r.blockSize = kBlockSize;
     r.ioSize = kIoSize;
-    const uint64_t bytes = _tree ? _tree->totalBytes() : 0;
+    const auto tree = [self current];
+    const uint64_t bytes = tree ? tree->totalBytes() : 0;
     r.totalBytes = r.usedBytes = (bytes + kBlockSize - 1) / kBlockSize * kBlockSize;
     r.freeBytes = r.availableBytes = 0;
-    r.totalFiles = _tree ? _tree->clipCount() + 2 : 0;
+    r.totalFiles = tree ? tree->clipCount() + 2 : 0;
     r.freeFiles = 0;
     return r;
 }
@@ -357,8 +442,15 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
         _items.clear();
     }
     _root = nil;
-    _cache.reset();  // its workers stop
-    _tree.reset();   // the clips close
+    if (_notifyToken != NOTIFY_TOKEN_INVALID) notify_cancel(_notifyToken);
+    _notifyToken = NOTIFY_TOKEN_INVALID;
+    dispatch_barrier_sync(_reads, ^{});  // a rescan request already queued has reached the watcher
+    _watcher.reset();  // its thread stops (a rescan in progress finishes)
+    _cache.reset();    // its workers stop
+    {
+        std::lock_guard<std::mutex> lock(_treeMutex);
+        _tree.reset();  // the clips close
+    }
     reply(nil);
 }
 
@@ -389,14 +481,12 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
             reply([self itemFor:n], name, nil);
             return;
         }
-        const std::wstring w = util::widen(utf8);
-        const auto& dirs = dir.dir->dirs;  // sorted by name, case-insensitively
-        auto it = std::lower_bound(dirs.begin(), dirs.end(), 0, [&](const std::unique_ptr<vfs::Dir>& d, int) {
-            return vfs::compareNames(d->name.data(), d->name.size(), w.data(), w.size()) < 0;
-        });
-        if (it != dirs.end() && vfs::compareNames((*it)->name.data(), (*it)->name.size(), w.data(), w.size()) == 0) {
-            reply([self itemFor:childFolder(**it, dir.id)], [FSFileName nameWithCString:util::narrow((*it)->name).c_str()],
-                  nil);
+        // In the tree shown now (case-insensitive, as its names).
+        const auto tree = [self current];
+        const vfs::Node d = tree ? tree->find((dir.path + L"\\" + util::widen(utf8)).c_str()) : vfs::Node{};
+        if (d.kind == vfs::Node::Directory) {
+            const Node n = childFolder(*d.dir, dir);
+            reply([self itemFor:n], [FSFileName nameWithCString:[self nameOf:n].c_str()], nil);
             return;
         }
     } else if (dir.kind == Node::ClipFolder) {
@@ -477,8 +567,9 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
                usingPacker:(FSDirectoryEntryPacker*)packer
               replyHandler:(void (^)(FSDirectoryVerifier, NSError*))reply {
     const Node& dir = ((MLVItem*)directory)->node;
-    if (cookie != FSDirectoryCookieInitial && verifier != kVerifier) {
-        reply(kVerifier, [NSError errorWithDomain:FSKitErrorDomain code:FSErrorInvalidDirectoryCookie userInfo:nil]);
+    const FSDirectoryVerifier current = _generation.load();
+    if (cookie != FSDirectoryCookieInitial && verifier != current) {  // the tree changed since: start again
+        reply(current, [NSError errorWithDomain:FSKitErrorDomain code:FSErrorInvalidDirectoryCookie userInfo:nil]);
         return;
     }
     const std::vector<Node> children = [self childrenOf:dir];
@@ -502,7 +593,7 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
         }
         if (!ok) break;
     }
-    reply(kVerifier, nil);
+    reply(current, nil);
 }
 
 // --- FSVolumeXattrOperations (inhibited: not called) ---
