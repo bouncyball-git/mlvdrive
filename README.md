@@ -88,9 +88,13 @@ read_ahead = auto           ; auto (one per CPU) or a number of frames
 Pixel maps (`.fpm` focus, `.bpm` bad pixels, MLV-App's format and names:
 `<camera id>_<raw width>x<raw height>`) are looked up beside the clip, first as `<clip name>.fpm`
 / `.bpm` (a map for that clip alone; a clip-named `.fpm` turns the focus fix on in auto), then
-under the generic name; then in `%APPDATA%\MLV Drive\pixelmaps`; then in `pixelmaps` beside the
-programs (MLV-App's 273 maps: EOS M, EOS M2, 100D, 650D and 700D in their video and crop modes).
-Bad pixels are searched on the first frame (or read from a `.bpm` map).
+under the generic name; then in `%APPDATA%\MLV Drive\pixelmaps` (macOS: `~/Library/Application
+Support/MLV Drive/pixelmaps`); then in `pixelmaps` beside the programs. None come with MLV Drive:
+for the EOS M, 100D, 650D and 700D the focus pixels of the usual video modes are worked out
+without a map, and for the other modes (crop, other sizes) or the EOS M2, copy the maps you need
+from the `pixel_maps` folder of MLV-App (https://github.com/ilia3101/MLV-App) into
+`%APPDATA%\MLV Drive\pixelmaps`. Bad pixels are searched on the first frame (or read from a
+`.bpm` map).
 
 The cache keeps the frames read most recently, except that a clip read straight through keeps
 its start: a clip longer than the cache, played again, finds that part made.

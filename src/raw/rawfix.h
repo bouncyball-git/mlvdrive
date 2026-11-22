@@ -37,8 +37,9 @@ void setSimd(bool on);
 // looked up, for a clip: beside it as <clip name>.fpm / .bpm (a map for that clip alone), beside
 // it under the generic name, then in these folders in order (UTF-8 paths). Process-wide.
 void setPixelMapFolders(const std::vector<std::string>& folders);
-// The usual folders: <settings folder>\pixelmaps (%APPDATA%\MLV Drive\pixelmaps), then the
-// pixelmaps folder beside the program (macOS: also the app bundle's Resources/pixelmaps).
+// The usual folders: <settings folder>\pixelmaps (%APPDATA%\MLV Drive\pixelmaps; macOS:
+// ~/Library/Application Support/MLV Drive/pixelmaps), then the pixelmaps folder beside the
+// program. None are bundled: users add the maps they need.
 std::vector<std::string> defaultPixelMapFolders();
 
 // One per clip and settings. apply() may run on several threads at once: the first call works

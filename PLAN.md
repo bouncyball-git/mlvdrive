@@ -273,7 +273,10 @@ in Resolve.
      console and in the tray's DNG menu. Pixel maps looked up beside the clip (`<clip>.fpm` /
      `.bpm`, then the generic `<camera>_<w>x<h>` name), then `%APPDATA%\MLV Drive\pixelmaps`,
      then `pixelmaps` beside the programs (MLV-App's 7 maps, copied into
-     `third_party/mlvapp/pixelmaps`, installed with the programs); a clip-named `.fpm` turns the
+     `third_party/mlvapp/pixelmaps`, installed with the programs; all 273 from 0.7; none since,
+     removed from the repository: 360 MB installed, 3 minutes of setup compression, for 5 cameras'
+     crop modes. Users copy the maps they need from MLV-App, see the README; the installers delete
+     the bundled folder of an earlier version); a clip-named `.fpm` turns the
      focus fix on in auto. Checked on `M05-1137` (5D Mark III with its own .fpm): 24,697 pixels
      changed, all of them map points; aggressive bad-pixel search finds 10 in a frame (auto
      none); selftest identical vector / scalar; the drive gives the same bytes read out of order
@@ -470,8 +473,8 @@ in Resolve.
    - **Portability fixes in the core** (outside Windows these compiled but were wrong): dates were
      0 (`tree.cpp`: recording time, file time, now); `cache_mb = auto` was always 512 MB
      (`settings.cpp`: now `hw.memsize`); settings in `~/Library/Application Support/MLV Drive/`
-     (Linux: `~/.config/mlvdrive/`); pixel maps also beside the program and in the app bundle's
-     `Resources/pixelmaps`.
+     (Linux: `~/.config/mlvdrive/`); pixel maps also beside the program (the app bundle's
+     `Resources/pixelmaps` was looked in too while the maps were bundled).
    - **Steps:**
      1. Portability fixes (above). Done: checked on two clips (RTCI and file dates right, folder
         dates their newest clip's), 16 GB RAM -> 4096 MB cache, the paths.

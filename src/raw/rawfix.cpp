@@ -399,9 +399,6 @@ std::vector<std::string> defaultPixelMapFolders() {
     if (!exe.empty()) {
         const fs::path dir = fs::weakly_canonical(fs::path(exe), ec).parent_path();
         folders.push_back((dir / "pixelmaps").string());
-#ifdef __APPLE__
-        folders.push_back((dir.parent_path() / "Resources" / "pixelmaps").string());  // in an app bundle
-#endif
     }
 #endif
     return folders;

@@ -1,7 +1,7 @@
 # Installs MLV Drive for the current user (no administrator rights), from the folder this script
 # is in (a release zip unpacked, or the staging folder `build.ps1 install` makes):
 #
-#   install.ps1               the programs and pixel maps into %LOCALAPPDATA%\Programs\MLV Drive, a
+#   install.ps1               the programs into %LOCALAPPDATA%\Programs\MLV Drive, a
 #                             Start Menu shortcut "MLV Drive" (the tray app); a running copy is asked
 #                             to quit first
 #   install.ps1 -Uninstall    removes them, the shortcut and "Start with Windows" (if it starts this
@@ -63,9 +63,12 @@ foreach ($p in $programs) { if (-not (Test-Path (Join-Path $From $p))) { throw "
 Stop-Installed
 Step "install: $InstallDir"
 New-Item -ItemType Directory -Force $InstallDir | Out-Null
-# Programs since renamed (mlvdrive_cli.exe is mlvdrive_tool.exe since 0.2.0).
-foreach ($old in 'mlvdrive_cli.exe') { Remove-Item (Join-Path $InstallDir $old) -Force -ErrorAction SilentlyContinue }
-$items = $programs + 'pixelmaps', 'README.md', 'LICENSE', 'install.ps1', 'install.cmd', 'uninstall.cmd' |
+# Programs since renamed (mlvdrive_cli.exe is mlvdrive_tool.exe since 0.2.0), and the pixel maps
+# 0.7 to 0.9 installed here (no longer bundled).
+foreach ($old in 'mlvdrive_cli.exe', 'pixelmaps') {
+    Remove-Item (Join-Path $InstallDir $old) -Recurse -Force -ErrorAction SilentlyContinue
+}
+$items = $programs + 'README.md', 'LICENSE', 'install.ps1', 'install.cmd', 'uninstall.cmd' |
     Where-Object { Test-Path (Join-Path $From $_) }
 foreach ($i in $items) { Copy-Item (Join-Path $From $i) $InstallDir -Recurse -Force }
 # Files unpacked from a downloaded zip carry its "from the internet" mark: the copies installed

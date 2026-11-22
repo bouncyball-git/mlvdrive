@@ -13,7 +13,7 @@
 #              stops a running copy first. WinFsp must be installed separately (https://winfsp.dev/rel/)
 #   uninstall  removes them, the shortcut and "Start with Windows"; keeps the settings
 #              (%APPDATA%\MLV Drive)
-#   package    dist\MLVDrive-<version>-win64.zip: the programs, pixel maps, README and LICENSE, to
+#   package    dist\MLVDrive-<version>-win64.zip: the programs, README and LICENSE, to
 #              run from any folder (portable)
 #   setup      dist\MLVDrive-<version>-setup.exe: the installer (installer\mlvdrive.iss; needs Inno
 #              Setup 6, https://jrsoftware.org/isdl.php): default or custom (tray app, command-line
@@ -50,8 +50,8 @@ function Get-Version {
     $m.Matches[0].Groups[1].Value
 }
 
-# What gets installed or released, gathered in build\stage: the programs, the pixel maps, the
-# README and LICENSE, the installer.
+# What gets installed or released, gathered in build\stage: the programs, the README and LICENSE,
+# the installer. (No pixel maps: users add their own, see the README.)
 function New-Stage {
     $stage = Join-Path $BuildDir 'stage'
     $programs = 'mlvdrive_tray.exe', 'mlvdrive.exe', 'mlvdrive_tool.exe' | ForEach-Object { Join-Path $BuildDir $_ }
@@ -59,8 +59,6 @@ function New-Stage {
     if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
     New-Item -ItemType Directory -Force $stage | Out-Null
     Copy-Item $programs $stage
-    # From the source (build\pixelmaps, CMake's copy, keeps maps removed since)
-    Copy-Item (Join-Path $Root 'third_party\mlvapp\pixelmaps') $stage -Recurse
     Copy-Item (Join-Path $Root 'README.md'), (Join-Path $Root 'LICENSE') $stage
     Copy-Item (Join-Path $Root 'tools\install.ps1'), (Join-Path $Root 'tools\install.cmd'), (Join-Path $Root 'tools\uninstall.cmd') $stage
     $stage

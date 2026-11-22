@@ -145,7 +145,3 @@ target_link_libraries(mlvdrive_tool PRIVATE mlv_vfs)
 if(MSVC)
     target_compile_options(mlvdrive_tool PRIVATE /W3)
 endif()
-
-# MLV-App's focus pixel maps (third_party/mlvapp/pixelmaps), beside the programs: looked up there
-# after the clip's folder and %APPDATA%\MLV Drive\pixelmaps.
-file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mlvapp/pixelmaps" DESTINATION "${CMAKE_BINARY_DIR}")

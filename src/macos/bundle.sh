@@ -38,9 +38,8 @@ sed "s/@VERSION@/$VERSION/g" "$SRC/Info-fs.plist.in" > "$APPEX/Contents/Info.pli
 mkdir -p "$APP/Contents/Resources"
 cp "$SRC/../../assets/mlvdrive.icns" "$APP/Contents/Resources/mlvdrive.icns"
 cp "$SRC/../../assets/mlvdrive.icns" "$APPEX/Contents/Resources/mlvdrive.icns"
-# The focus pixel maps, where the module looks beside itself (Resources/pixelmaps).
+# No pixel maps are bundled (users add their own: the README); a build before that had them here.
 rm -rf "$APPEX/Contents/Resources/pixelmaps"
-cp -R "$SRC/../../third_party/mlvapp/pixelmaps" "$APPEX/Contents/Resources/pixelmaps"
 
 # Inside out: the extension, then the app around it. Ad hoc, each gets a designated requirement of
 # its bundle identifier: macOS's privacy permissions (Full Disk Access, given to the app) are kept

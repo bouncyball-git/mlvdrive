@@ -70,14 +70,15 @@ Name: "addpath"; Description: "Add the command-line programs to PATH"; Component
 Source: "{#Stage}\mlvdrive_tray.exe"; DestDir: "{app}"; Components: gui; Flags: ignoreversion
 Source: "{#Stage}\mlvdrive.exe"; DestDir: "{app}"; Components: cli; Flags: ignoreversion
 Source: "{#Stage}\mlvdrive_tool.exe"; DestDir: "{app}"; Components: tool; Flags: ignoreversion
-Source: "{#Stage}\pixelmaps\*"; DestDir: "{app}\pixelmaps"; Flags: ignoreversion recursesubdirs
 Source: "{#Stage}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Root}\assets\mlvdrive.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
-; Programs since renamed, the script installer's files, and programs not chosen this time.
+; Programs since renamed, the script installer's files, the pixel maps 0.7 to 0.9 installed (no
+; longer bundled), and programs not chosen this time.
 Type: files; Name: "{app}\mlvdrive_cli.exe"
+Type: filesandordirs; Name: "{app}\pixelmaps"
 Type: files; Name: "{app}\install.ps1"
 Type: files; Name: "{app}\install.cmd"
 Type: files; Name: "{app}\uninstall.cmd"

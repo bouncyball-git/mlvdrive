@@ -58,6 +58,6 @@ Licence GPL-3.0. Inspired by and partly derived from MLVFS by David Milligan; us
 MLV-App (third_party/mlvapp).
 TXT
 rm -f "$DMG"
-# LZMA (ULMO, macOS 10.15+): 10 MB; zlib (UDZO) made 97 MB of it: the pixel maps (360 MB of text).
+# LZMA (ULMO, macOS 10.15+): the smallest.
 hdiutil create -volname "MLV Drive $VERSION" -srcfolder "$STAGE" -fs HFS+ -format ULMO -ov "$DMG" > /dev/null
 echo "$DMG ($(du -h "$DMG" | cut -f1))"

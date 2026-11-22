@@ -26,10 +26,6 @@ From MLV-App (https://github.com/ilia3101/MLV-App), commit abdb10fd02dd (2026-11
   the frame no longer "fixes" one on a neighbouring row (reading up to 3 values past the image);
   the look-up tables' allocations checked; a file handle leak; chroma smoothing left out
   (`chroma_smooth*.c`, `opt_med.h`: not used); `extern "C"`.
-- `pixelmaps/` (from `pixel_maps/`): MLV-App's focus pixel maps, all 273 (650D, 700D, EOS M,
-  100D, EOS M2 in their video and crop modes; the collection grew from Daniel Fort's
-  ml-focus-pixels maps), for the modes the built-in patterns don't cover. Changed: line endings
-  to LF.
 - `raw.h`: a portable stand-in for MLV-App's (whose bit fields need GCC's packed attribute).
 
 Changes are marked "MLV Drive" in the code. MLV-App's licence: `LICENSE` (GPL-3.0).
