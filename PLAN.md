@@ -285,7 +285,8 @@ in Resolve.
      `build.ps1 package` makes `dist\MLVDrive-<version>-win64.zip` (2.8 MB). Checked: installed
      from the unpacked zip over a running copy, started, `M:` back with every frame checked.
      Version 0.2.0 since; 0.7.0 (new icon), 0.8.0 (the review passes: LJ92 hardened and fuzzed,
-     fixes and clean-up).
+     fixes and clean-up), 0.9.0 (macOS: the FSKit drive, MLV Drive.app, the DMG; NEON stripe
+     correction; see milestone 8).
    - Installer (0.2.0): `installer/mlvdrive.iss`, `build.ps1 setup` ->
      `dist\MLVDrive-<version>-setup.exe` (2.5 MB; Inno Setup 6). Types Default (tray app +
      command-line drive) and Custom (gui / cli / tool components; at least one of gui and cli,
@@ -371,7 +372,9 @@ in Resolve.
      the first; the harness then found a null-pointer crash for a stream without a Huffman
      table (now refused); the final code has no memory errors. Every LJ92 change:
      `third_party/mlvapp/liblj92/lj92_changes.md`. test.ps1: 20 of 20.
-8. **macOS 26+, native FSKit** (in progress). Pure macOS: an FSKit file system extension, no
+8. **macOS 26+, native FSKit** (released in 0.9.0; to do: Resolve on the Mac, a spanned clip and
+   other cameras' clips through the Mac drive, a Developer ID). 0.9.0's checks: selftest on the
+   4 Desktop clips (1080p and 3K LJ92, 1080p uncompressed), `tools/test-macos.sh --all`: 0 failed. Pure macOS: an FSKit file system extension, no
    macFUSE / libfuse, macOS 26 or later (folder-backed volumes, `FSPathURLResource`, are new in
    26). It must be very fast: FSKit takes every request from the kernel to our extension process
    by IPC, so the design keeps round trips few and cheap and never blocks them on a decode.
@@ -493,8 +496,9 @@ in Resolve.
         - `tools/test-macos.sh <folder> [--all]`: mount with the test patterns, frames in random
           order byte-identical to `mlvdrive_tool dng`, WAVs to `mlvdrive_tool wav`, chart 2 to
           `mlvdrive_tool patterns`, read speed, unmount.
-        - Checked (M4 Mac mini, the 4 Desktop clips: 5D Mark III 1080p uncompressed 14-bit,
-          1113 frames): every frame identical, both WAVs, the chart; reading in order
+        - Checked (M4 Mac mini, the 4 Desktop clips, all 5D Mark III 14-bit: 1080p LJ92 with
+          audio, 543 frames; 3K (3072 x 1728) LJ92, 64 and 81 frames; 1080p uncompressed with
+          audio, 425; 1113 frames): every frame identical, both WAVs, the chart; reading in order
           unbuffered 445 frames/s first (1.8 GB/s, frames made from the clip; ~18x real time;
           Windows ~270), 1071 again. Not yet: Finder, Resolve, LJ92 clips, a spanned clip.
      4. Live folders and the command line (done):
