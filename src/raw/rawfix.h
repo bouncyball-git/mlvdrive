@@ -28,7 +28,8 @@ struct FixSettings {
     int badPixelSearch = 0;    // 0 normal, 1 aggressive
 };
 
-// The vector (SSE4.1) code where there is one, or the scalar code it must equal (for comparing).
+// The vector code (SSE4.1 on x86, NEON on ARM64) where there is one, or the scalar code it must
+// equal (for comparing).
 // On by default; process-wide.
 void setSimd(bool on);
 

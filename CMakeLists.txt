@@ -117,16 +117,24 @@ elseif(APPLE)
     add_executable(mlvdrive_menubar src/macos/menubar.mm src/app/settings.cpp)
     set_target_properties(mlvdrive_menubar PROPERTIES OUTPUT_NAME "MLV Drive")
     target_compile_options(mlvdrive_menubar PRIVATE -fobjc-arc -Wall -Wextra -Wno-unused-parameter)
-    target_link_libraries(mlvdrive_menubar PRIVATE mlv_vfs "-framework AppKit" "-framework ServiceManagement")
+    target_link_libraries(mlvdrive_menubar PRIVATE mlv_vfs "-framework AppKit" "-framework ServiceManagement"
+                                                   "-framework UserNotifications")
 
     # mlvdrive: mounts, unmounts and rescans from the command line (in MLV Drive.app/Contents/MacOS).
     add_executable(mlvdrive src/macos/mlvdrive_cli.cpp src/app/settings.cpp)
     target_compile_options(mlvdrive PRIVATE -Wall -Wextra -Wno-unused-parameter)
     target_link_libraries(mlvdrive PRIVATE mlv_vfs)
 
-    # Assembled, signed (ad hoc, or $SIGN_IDENTITY) and registered after every build.
+    # Assembled, signed (ad hoc, or $SIGN_IDENTITY) and registered after every build; a release
+    # build (tools/package-macos.sh) isn't registered on this Mac.
+    option(MLVDRIVE_RELEASE_BUNDLE "Assemble MLV Drive.app without registering it here (packaging)" OFF)
+    if(MLVDRIVE_RELEASE_BUNDLE)
+        set(_bundle_mode "--release")
+    else()
+        set(_bundle_mode "")
+    endif()
     add_custom_target(mlvdrive_bundle ALL
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/bundle.sh" "${CMAKE_BINARY_DIR}" "${PROJECT_VERSION}"
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/bundle.sh" "${CMAKE_BINARY_DIR}" "${PROJECT_VERSION}" ${_bundle_mode}
         DEPENDS MLVDriveFS mlvdrive_menubar mlvdrive
         COMMENT "Assembling MLV Drive.app")
 endif()

@@ -8,12 +8,16 @@
 // The state is read from the system (getmntinfo) every 3 seconds and when the menu opens, so an
 // eject in Finder or a `umount` shows.
 //
+// Failures of what the user asked for are dialogs; of what happened by itself (mounting at
+// start) notifications, as the tray app's balloons.
+//
 // Setup, once (the menu's Setup section says what is missing and opens the right pane): the file
 // system extension turned on (System Settings > General > Login Items & Extensions > File System
 // Extensions), and Full Disk Access for this app, which the module's reads are checked against
 // (clips on the Desktop, in Documents, on external or network drives).
 #import <AppKit/AppKit.h>
 #import <ServiceManagement/ServiceManagement.h>
+#import <UserNotifications/UserNotifications.h>
 
 #include "app/settings.h"
 #include "util/file.h"
@@ -205,7 +209,10 @@ Action when(bool enabled, Action action) { return enabled ? action : (Action)nil
     _item.menu = menu;
     [self refreshState];
     _timer = [NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer*) { [self refreshState]; }];
-    if (_settings.mountAtStart && !_mounted && [self canMount]) [self mount];
+    [UNUserNotificationCenter.currentNotificationCenter
+        requestAuthorizationWithOptions:UNAuthorizationOptionAlert
+                      completionHandler:^(BOOL, NSError*){}];
+    if (_settings.mountAtStart && !_mounted && [self canMount]) [self mountAsked:false];
     else if (_settings.folders.empty() && !_settings.testPatterns) [self welcome];
 }
 
@@ -282,6 +289,11 @@ Action when(bool enabled, Action action) { return enabled ? action : (Action)nil
 }
 
 - (void)mount {
+    [self mountAsked:true];
+}
+
+// `asked`: by the user (a failure is a dialog); otherwise by itself (a notification).
+- (void)mountAsked:(bool)asked {
     if (![self canMount] || ![self saveSettings]) return;
     const std::string at = [self mountPoint];
     std::error_code ec;
@@ -301,23 +313,43 @@ Action when(bool enabled, Action action) { return enabled ? action : (Action)nil
                 [self refreshState];
                 return;
             }
-            [self mountFailed:err];
+            [self mountFailed:err asked:asked];
         });
     });
 }
 
-- (void)mountFailed:(NSString*)err {
+- (void)mountFailed:(NSString*)err asked:(bool)asked {
     if ([err containsString:@"disabled"] || moduleEnabled() == Tri::No) {
         _lastError = @"the file system extension is turned off";
-        [self explainSetup];
+        if (asked) [self explainSetup];
+        else [self notify:@"MLV Drive isn't mounted" text:@"Its file system extension is turned off: Setup in MLV Drive's menu."];
         return;
     }
-    _lastError = err.length ? err : @"mount failed";
+    // mount's own words, made plain: the module refuses a source with no clips while loading it.
+    if ([err containsString:@"Loading resource"] && [err containsString:@"No such file"])
+        _lastError = @"no MLV clips in the folders (or MLV Drive can't read them)";
+    else if ([err containsString:@"Resource busy"])
+        _lastError = @"macOS still holds the folders from an earlier mount: try again in a moment";
+    else
+        _lastError = err.length ? err : @"mount failed";
+    if (!asked) {
+        [self notify:@"MLV Drive couldn't mount" text:_lastError];
+        return;
+    }
     [self alert:@"MLV Drive couldn't mount"
            text:[NSString stringWithFormat:@"%@\n\nAre there MLV clips in the folders, and can MLV Drive read them? Clips "
                                            @"on the Desktop, in Documents or on external or network drives need Full "
                                            @"Disk Access for MLV Drive (Setup in the menu).",
                                            _lastError]];
+}
+
+- (void)notify:(NSString*)title text:(NSString*)text {
+    UNMutableNotificationContent* content = [[UNMutableNotificationContent alloc] init];
+    content.title = title;
+    content.body = text ?: @"";
+    [UNUserNotificationCenter.currentNotificationCenter
+        addNotificationRequest:[UNNotificationRequest requestWithIdentifier:NSUUID.UUID.UUIDString content:content trigger:nil]
+         withCompletionHandler:nil];
 }
 
 // Unmounts; `then` runs after (with whether it worked). Busy (a program has a file open): asks
@@ -461,6 +493,41 @@ Action when(bool enabled, Action action) { return enabled ? action : (Action)nil
         [self alert:@"Some settings were left at their defaults" text:toNS(text)];
     }
     if (_mounted) [self remount];
+}
+
+// The mlvdrive command (Contents/MacOS/mlvdrive) linked into /usr/local/bin: macOS asks for an
+// administrator's password.
+- (NSString*)commandPath {
+    return [NSBundle.mainBundle pathForAuxiliaryExecutable:@"mlvdrive"];
+}
+
+- (bool)commandInstalled {
+    NSString* link = [NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:@"/usr/local/bin/mlvdrive" error:nil];
+    return link && [link isEqualToString:[self commandPath]];
+}
+
+- (void)installCommand {
+    NSString* target = [self commandPath];
+    if (!target) return;
+    NSString* script = [NSString
+        stringWithFormat:@"do shell script \"mkdir -p /usr/local/bin && ln -sf %@ /usr/local/bin/mlvdrive\" "
+                         @"with administrator privileges",
+                         [self quoted:target]];
+    NSDictionary* error = nil;
+    [[[NSAppleScript alloc] initWithSource:script] executeAndReturnError:&error];
+    if (error && [error[NSAppleScriptErrorNumber] intValue] != -128)  // -128: cancelled
+        [self alert:@"Can't install the mlvdrive command" text:error[NSAppleScriptErrorMessage]];
+    else if (!error)
+        [self alert:@"The mlvdrive command is installed"
+               text:@"In Terminal: mlvdrive mount, mlvdrive unmount, mlvdrive rescan (mlvdrive alone for help)."];
+}
+
+// A path quoted for the shell, inside an AppleScript string.
+- (NSString*)quoted:(NSString*)path {
+    NSString* sh = [NSString stringWithFormat:@"'%@'", [path stringByReplacingOccurrencesOfString:@"'" withString:@"'\\''"]];
+    // AppleScript's string: \ and " escaped (\ first).
+    sh = [sh stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"];
+    return [sh stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
 }
 
 - (bool)startsAtLogin {
@@ -620,6 +687,12 @@ Action when(bool enabled, Action action) { return enabled ? action : (Action)nil
           title:fda ? @"Full Disk Access: on" : @"Full Disk Access: off — needed for the Desktop, Documents, external drives…"
         checked:fda
          action:^{ [me openFullDiskAccess]; }];
+    [setup addItem:NSMenuItem.separatorItem];
+    const bool command = [self commandInstalled];
+    [self add:setup
+          title:command ? @"The mlvdrive command: installed (/usr/local/bin)" : @"Install the mlvdrive command…"
+        checked:command
+         action:when(!command, ^{ [me installCommand]; })];
     [self add:menu title:@"Mount when MLV Drive starts" checked:s.mountAtStart
            action:set(^(app::Settings& x) { x.mountAtStart = !x.mountAtStart; })];
     [self add:menu title:@"Start at login" checked:[self startsAtLogin] action:^{ [me toggleStartAtLogin]; }];

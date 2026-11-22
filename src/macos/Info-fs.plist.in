@@ -8,6 +8,8 @@
 	<string>MLV Drive</string>
 	<key>CFBundleExecutable</key>
 	<string>MLVDriveFS</string>
+	<key>CFBundleIconFile</key>
+	<string>mlvdrive</string>
 	<key>CFBundleIdentifier</key>
 	<string>org.mlvdrive.MLVDrive.fs</string>
 	<key>CFBundleInfoDictionaryVersion</key>

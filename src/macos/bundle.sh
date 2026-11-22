@@ -1,6 +1,8 @@
 #!/bin/sh
 # Assembles "MLV Drive.app" in the build folder from the built programs, signs it and registers it
 # with macOS (CMake runs this after building; by hand: src/macos/bundle.sh <build dir> <version>).
+# --release (tools/package-macos.sh): no registering and no stopping the module running here: a
+# second copy of the app registered beside the development one would compete for the module.
 #
 # The bundle is updated in place, never deleted and made again: a new bundle is a new registration,
 # which FSKit treats as a new module, turned off in System Settings.
@@ -13,6 +15,7 @@ set -eu
 SRC=$(cd "$(dirname "$0")" && pwd)
 BUILD=$1
 VERSION=$2
+RELEASE=${3:-}
 IDENTITY=${SIGN_IDENTITY:--}
 APP="$BUILD/MLV Drive.app"
 APPEX="$APP/Contents/Extensions/MLVDriveFS.appex"
@@ -31,6 +34,10 @@ install_file "$BUILD/MLVDriveFS" "$APPEX/Contents/MacOS/MLVDriveFS"
 install_file "$BUILD/mlvdrive" "$APP/Contents/MacOS/mlvdrive"
 sed "s/@VERSION@/$VERSION/g" "$SRC/Info-app.plist.in" > "$APP/Contents/Info.plist"
 sed "s/@VERSION@/$VERSION/g" "$SRC/Info-fs.plist.in" > "$APPEX/Contents/Info.plist"
+# The icon (tools/make_icons.py draws it): the app's, and the module's (System Settings' list).
+mkdir -p "$APP/Contents/Resources"
+cp "$SRC/../../assets/mlvdrive.icns" "$APP/Contents/Resources/mlvdrive.icns"
+cp "$SRC/../../assets/mlvdrive.icns" "$APPEX/Contents/Resources/mlvdrive.icns"
 # The focus pixel maps, where the module looks beside itself (Resources/pixelmaps).
 rm -rf "$APPEX/Contents/Resources/pixelmaps"
 cp -R "$SRC/../../third_party/mlvapp/pixelmaps" "$APPEX/Contents/Resources/pixelmaps"
@@ -49,6 +56,7 @@ else
     codesign --force --sign "$IDENTITY" --options runtime --entitlements "$SRC/fs.entitlements" "$APPEX"
     codesign --force --sign "$IDENTITY" --options runtime "$APP"
 fi
+[ "$RELEASE" = "--release" ] && exit 0
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R "$APP"
 
 # FSKit keeps the module running after the last unmount, and the next mount would use that old

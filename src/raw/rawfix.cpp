@@ -34,6 +34,14 @@
 #define RAWFIX_SSE41 0
 #endif
 
+// NEON for it on ARM64 (Apple Silicon, ARM Windows): every ARM64 CPU has it.
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define RAWFIX_NEON 1
+#include <arm_neon.h>
+#else
+#define RAWFIX_NEON 0
+#endif
+
 namespace raw {
 
 namespace {
@@ -233,6 +241,56 @@ bool HasSse41() {
 }
 #endif
 
+#if RAWFIX_NEON
+// The brightest pixel of the 8-column groups (as the scalar loop in ApplyStripes), 8 at a time.
+int BrightestNeon(const uint16_t* img, int width, int height) {
+    const int groups = width / 8;
+    uint16x8_t m = vdupq_n_u16(0);
+    for (int y = 0; y < height; ++y) {
+        const uint16_t* row = img + size_t(y) * width;
+        for (int g = 0; g < groups; ++g) m = vmaxq_u16(m, vld1q_u16(row + g * 8));
+    }
+    return vmaxvq_u16(m);
+}
+
+// uint16_t(min(white, (v - black) * c / 65536 + black)) for 4 values (32-bit lanes); the low 16
+// bits, as the scalar cast.
+inline uint16x4_t ScaleNeon(uint16x4_t v16, int32x4_t c, int32x4_t black32, int32x4_t white32) {
+    const int32x4_t v = vreinterpretq_s32_u32(vmovl_u16(v16));
+    const int32x4_t prod = vmulq_s32(vsubq_s32(v, black32), c);
+    const int32x4_t neg = vshrq_n_s32(prod, 31);  // -1 where negative
+    const int32x4_t q = vshrq_n_s32(vaddq_s32(prod, vandq_s32(neg, vdupq_n_s32(0xFFFF))), 16);  // / 65536 toward 0
+    return vmovn_u32(vreinterpretq_u32_s32(vminq_s32(white32, vaddq_s32(q, black32))));
+}
+
+// The factors applied to 8 columns at a time: the SSE4.1 version's twin, the same values as the
+// scalar loop.
+void ApplyStripesNeon(const int coefficients[8], uint16_t* img, int black, int white, int width, int height) {
+    const int groups = width / 8;
+    const int32x4_t c0 = vld1q_s32(coefficients);
+    const int32x4_t c1 = vld1q_s32(coefficients + 4);
+    // Lanes whose factor is 0 (not measured) are left alone.
+    const uint16x8_t hasFactor = vcombine_u16(vmovn_u32(vmvnq_u32(vceqq_s32(c0, vdupq_n_s32(0)))),
+                                              vmovn_u32(vmvnq_u32(vceqq_s32(c1, vdupq_n_s32(0)))));
+    const int32x4_t black32 = vdupq_n_s32(black);
+    const int32x4_t white32 = vdupq_n_s32(white);
+    const uint16x8_t white16 = vdupq_n_u16(uint16_t(white));  // white <= 65535 (the brightest pixel or less)
+    for (int y = 0; y < height; ++y) {
+        uint16_t* row = img + size_t(y) * width;
+        for (int g = 0; g < groups; ++g) {
+            uint16_t* p = row + g * 8;
+            if (!(p[0] > black + 64)) continue;  // the group's first pixel: not in the darkest tones
+            const uint16x8_t v = vld1q_u16(p);
+            const uint16x8_t scaled = vcombine_u16(ScaleNeon(vget_low_u16(v), c0, black32, white32),
+                                                   ScaleNeon(vget_high_u16(v), c1, black32, white32));
+            uint16x8_t take = vandq_u16(hasFactor, vtstq_u16(v, v));  // v != 0
+            take = vandq_u16(take, vcltq_u16(v, white16));             // v < white
+            vst1q_u16(p, vbslq_u16(take, scaled, v));
+        }
+    }
+}
+#endif
+
 std::atomic<bool> g_simd{true};
 
 void ApplyStripes(const Stripes& s, uint16_t* img, int black, int whiteLevel, int width, int height) {
@@ -241,6 +299,14 @@ void ApplyStripes(const Stripes& s, uint16_t* img, int black, int whiteLevel, in
     if (g_simd.load(std::memory_order_relaxed) && HasSse41() && whiteLevel * 2 / 3 >= 1) {
         const int white = std::max(whiteLevel * 2 / 3, BrightestSse41(img, width, height));
         ApplyStripesSse41(s.coefficients, img, black, white, width, height);
+        return;
+    }
+#endif
+#if RAWFIX_NEON
+    // NEON (every ARM64 CPU): the same values.
+    if (g_simd.load(std::memory_order_relaxed) && whiteLevel * 2 / 3 >= 1) {
+        const int white = std::max(whiteLevel * 2 / 3, BrightestNeon(img, width, height));
+        ApplyStripesNeon(s.coefficients, img, black, white, width, height);
         return;
     }
 #endif

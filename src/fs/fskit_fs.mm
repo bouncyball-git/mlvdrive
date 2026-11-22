@@ -150,6 +150,27 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
     }
 }
 
+// Finds and opens the clips: the tree, or null (why in `why`: the settings unusable, no clips).
+std::shared_ptr<vfs::Tree> buildTree(const app::Settings& s, std::string* why) {
+    raw::setPixelMapFolders(raw::defaultPixelMapFolders());
+    auto tree = std::make_shared<vfs::Tree>();
+    if (!tree->build(s.folders, app::buildOptions(s),
+                     [](const std::string& m) { os_log_error(Log(), "%{public}s", m.c_str()); }, why))
+        return nullptr;
+    if (tree->clipCount() == 0) {
+        *why = "no MLV clips in the folders";
+        return nullptr;
+    }
+    return tree;
+}
+
+// Whether two settings make the same tree (the DNGs and the folders shown).
+bool sameTree(const app::Settings& a, const app::Settings& b) {
+    return a.folders == b.folders && a.format == b.format && a.rawFixes == b.rawFixes &&
+           a.focusPixels == b.focusPixels && a.badPixels == b.badPixels && a.timecode == b.timecode &&
+           a.testPatterns == b.testPatterns;
+}
+
 }  // namespace
 
 // --- items ---
@@ -166,7 +187,7 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
 // --- the volume ---
 
 @interface MLVVolume : FSVolume <FSVolumeOperations, FSVolumeReadWriteOperations, FSVolumeXattrOperations>
-- (instancetype)initWithSettings:(const app::Settings&)settings source:(NSString*)source;
+- (instancetype)initWithSettings:(const app::Settings&)settings tree:(std::shared_ptr<vfs::Tree>)tree;
 @end
 
 @implementation MLVVolume {
@@ -188,10 +209,12 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
 @synthesize xattrOperationsInhibited = _xattrOperationsInhibited;
 @synthesize requestedMountOptions = _requestedMountOptions;
 
-- (instancetype)initWithSettings:(const app::Settings&)settings source:(NSString*)source {
+// `tree`: the clips opened with `settings` (at load).
+- (instancetype)initWithSettings:(const app::Settings&)settings tree:(std::shared_ptr<vfs::Tree>)tree {
     self = [super initWithVolumeID:[[FSVolumeIdentifier alloc] init] volumeName:[FSFileName nameWithString:@"MLV Drive"]];
     if (!self) return nil;
     _settings = settings;
+    _tree = std::move(tree);
     _xattrOperationsInhibited = YES;  // none: answered without a round trip
     _requestedMountOptions = FSMountOptionsReadOnly;
     _reads = dispatch_queue_create("org.mlvdrive.fs.reads",
@@ -246,23 +269,23 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
     os_log(Log(), "rescanned: %zu added, %zu removed, %zu changed, %zu skipped", added, removed, changed, skipped);
 }
 
-// Finds and opens the clips (with the options given to mount).
+// Ready to show: the clips were opened at load with the settings; mount's options (which only
+// arrive here) open them again if they change what is shown.
 - (NSError*)openWithOptions:(FSTaskOptions*)options {
-    applyOptions(options, &_settings);
-    raw::setPixelMapFolders(raw::defaultPixelMapFolders());
     const auto t0 = std::chrono::steady_clock::now();
-    auto tree = std::make_shared<vfs::Tree>();
-    std::string error;
-    const bool built = tree->build(
-        _settings.folders, app::buildOptions(_settings),
-        [](const std::string& m) { os_log_error(Log(), "%{public}s", m.c_str()); }, &error);
-    if (!built) {
-        os_log_error(Log(), "can't build the drive: %{public}s", error.c_str());
-        return posixError(EINVAL);
-    }
-    if (tree->clipCount() == 0) {
-        os_log_error(Log(), "no MLV clips in the folders");
-        return posixError(ENOENT);
+    const app::Settings loaded = _settings;
+    applyOptions(options, &_settings);
+    std::shared_ptr<const vfs::Tree> tree = [self current];
+    if (!sameTree(loaded, _settings)) {
+        std::string why;
+        auto rebuilt = buildTree(_settings, &why);
+        if (!rebuilt) {
+            // (FSKit keeps the source busy after a failed activation, until the module restarts:
+            // load refuses what it can, this is only for options that empty the drive)
+            os_log_error(Log(), "can't mount with these options: %{public}s", why.c_str());
+            return posixError(ENOENT);
+        }
+        tree = std::move(rebuilt);
     }
     const unsigned cpus = std::max(1u, std::thread::hardware_concurrency());
     const unsigned readAhead = _settings.readAhead < 0 ? cpus : unsigned(_settings.readAhead);
@@ -718,8 +741,18 @@ void applyOptions(FSTaskOptions* task, app::Settings* s) {
         std::filesystem::equivalent(util::u8(folder), util::u8(util::narrow(settingsFile)).parent_path(), ec);
     if (!isSettingsFolder) settings.folders = {util::widen(folder)};
     os_log(Log(), "loading %{public}s (%zu folder(s))", folder.c_str(), settings.folders.size());
+    // The clips are opened here, not at activate: a source that can't be shown (no clips) is
+    // refused now. A failed activation leaves the source busy in FSKit ("Resource busy" for every
+    // mount of it after) until the module restarts.
+    std::string why;
+    auto tree = buildTree(settings, &why);
+    if (!tree) {
+        os_log_error(Log(), "not mounted: %{public}s", why.c_str());
+        reply(nil, posixError(ENOENT));
+        return;
+    }
     self.containerStatus = [FSContainerStatus ready];
-    reply([[MLVVolume alloc] initWithSettings:settings source:url.path], nil);
+    reply([[MLVVolume alloc] initWithSettings:settings tree:std::move(tree)], nil);
 }
 
 - (void)unloadResource:(FSResource*)resource options:(FSTaskOptions*)options replyHandler:(void (^)(NSError*))reply {

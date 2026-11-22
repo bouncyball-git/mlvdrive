@@ -1,11 +1,13 @@
 """Draws MLV Drive's icons: a drive with a dashed copy of itself behind it (a virtual drive), in
 blue with a green light (mounted) and in grey with the light off (not mounted), at every size
-Windows asks for, into assets/mlvdrive.ico and assets/mlvdrive_off.ico.
+Windows asks for, into assets/mlvdrive.ico and assets/mlvdrive_off.ico; and the macOS app icon
+(the blue one, 16 to 1024 px, with the margin macOS app icons keep) into assets/mlvdrive.icns.
 
     python tools/make_icons.py
 
-Only the standard library: each size is drawn 4x larger and averaged down (anti-aliasing), stored
-as PNG inside the .ico (Windows Vista and later read that at any size).
+Only the standard library: each size is drawn 4x larger (2x from 512 px) and averaged down
+(anti-aliasing), stored as PNG inside the .ico (Windows Vista and later read that at any size) and
+the .icns.
 """
 import os
 import struct
@@ -79,23 +81,28 @@ def pixel(u, v, on, small):
     return None
 
 
-def draw(size, on):
-    n = size * SS
+def draw(size, on, margin=0.0):
+    """`margin`: empty space around the drawing (a fraction of the size, each side)."""
+    ss = SS if size < 512 else 2
+    n = size * ss
+    span = 1 - 2 * margin
     rows = []
     for y in range(size):
         row = bytearray()
         for x in range(size):
             r = g = b = a = 0
-            for sy in range(SS):
-                for sx in range(SS):
-                    c = pixel((x * SS + sx + 0.5) / n, (y * SS + sy + 0.5) / n, on, size <= 24)
+            for sy in range(ss):
+                for sx in range(ss):
+                    u = ((x * ss + sx + 0.5) / n - margin) / span
+                    v = ((y * ss + sy + 0.5) / n - margin) / span
+                    c = pixel(u, v, on, size <= 24) if 0 <= u <= 1 and 0 <= v <= 1 else None
                     if c is not None:
                         r += c[0]
                         g += c[1]
                         b += c[2]
                         a += 1
             if a:
-                row += bytes((r // a, g // a, b // a, a * 255 // (SS * SS)))
+                row += bytes((r // a, g // a, b // a, a * 255 // (ss * ss)))
             else:
                 row += bytes(4)
         rows.append(bytes(row))
@@ -121,6 +128,17 @@ def ico(images):
     return head + entries + data
 
 
+# macOS: the .icns entries (type, pixels); "2x" types are the Retina versions of a size.
+ICNS = [(b'icp4', 16), (b'icp5', 32), (b'ic11', 32), (b'icp6', 64), (b'ic12', 64), (b'ic07', 128),
+        (b'ic13', 256), (b'ic08', 256), (b'ic14', 512), (b'ic09', 512), (b'ic10', 1024)]
+ICNS_MARGIN = 0.08  # macOS app icons leave room around the artwork
+
+
+def icns(pngs):
+    body = b''.join(kind + struct.pack('>I', 8 + len(pngs[size])) + pngs[size] for kind, size in ICNS)
+    return b'icns' + struct.pack('>I', 8 + len(body)) + body
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = os.path.join(root, 'assets')
@@ -130,6 +148,10 @@ def main():
         with open(os.path.join(out, name), 'wb') as f:
             f.write(ico(images))
         print(name, sum(len(b) for _, b in images), 'bytes')
+    pngs = {size: png(size, draw(size, True, ICNS_MARGIN)) for size in sorted({size for _, size in ICNS})}
+    with open(os.path.join(out, 'mlvdrive.icns'), 'wb') as f:
+        f.write(icns(pngs))
+    print('mlvdrive.icns', os.path.getsize(os.path.join(out, 'mlvdrive.icns')), 'bytes')
 
 
 if __name__ == '__main__':

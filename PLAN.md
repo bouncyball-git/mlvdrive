@@ -404,7 +404,11 @@ in Resolve.
        file for a 1500-DNG folder).
      - Workers at QoS user-initiated (`pthread_set_qos_class_self_np`): on the performance cores,
        not left on the efficiency cores.
-     - NEON stripe correction (the SSE4.1 one's twin; selftest compares it with the scalar).
+     - NEON stripe correction (done; `src/raw/rawfix.cpp`, the SSE4.1 one's twin, every ARM64
+       CPU): selftest 0 frames differ from the scalar (M12-1330, M02-1916); corrections 1.06 ->
+       0.41 ms, 1.33 -> 0.48 ms a frame; a whole DNG 1.82 -> 1.02 ms on one thread, 2426 -> 2970
+       frames/s on 10. Through the drive, first pass, corrections on: M12-1330 513-540 -> 678-720
+       frames/s, M02-1916 441-479 -> 554-557 (with them off before: 521-756).
      - Open / close: measure with and without (`openCloseInhibited`: two round trips fewer a
        file; the frame cache keeps frames alive instead of the open file).
      - Never a 0-byte read reply before the end of a file (an FSKit data corruption with empty
@@ -543,12 +547,30 @@ in Resolve.
         with a red light while mounted, grey while not (fixed colours: a template image is one
         colour). Checked: mount at start from the settings file (the 4 Desktop
         clips), an unmount from outside noticed, `mlvdrive mount` without a folder, quit
-        unmounts. To do: a look at the menu by hand, the app icon (.icns, `make_icons.py`),
-        user notifications for background failures.
-     6. Build: CMake + Ninja for the code, a script assembling and signing the `.app` / `.appex`
-        (entitlements); universal (arm64 + x86_64); Developer ID, notarization, a DMG.
-        `tools/test.ps1`'s checks for macOS.
-     7. Resolve on the Mac.
+        unmounts; the menu by hand (fine).
+        - App icon: `tools/make_icons.py` also writes `assets/mlvdrive.icns` (the Windows app
+          icon: the blue drive with its dashed copy, 16-1024 px with macOS's margin; standard
+          library, the .ico files' pixels unchanged), in the app and the module (System Settings'
+          list).
+        - Failures of what was asked for are dialogs; of a mount at start, notifications
+          (UserNotifications; macOS asks once). mount's errors made plain (no clips, busy).
+        - **FSKit keeps a source busy after a failed activation** ("Can't start probe task,
+          resource state is 5": every mount of it "Resource busy") until the module restarts.
+          So the module opens the clips at `loadResource` (with the settings) and refuses a
+          source without clips there; `activate` only applies mount's options (opening again
+          only if they change what is shown). Checked: an empty folder refused three times in a
+          row, then mounted (with the test patterns); the script: 0 failed.
+     6. Release (done, ad hoc): `tools/package-macos.sh` builds in `build-release` (universal:
+        arm64 + x86_64, checked with lipo; `-DMLVDRIVE_RELEASE_BUNDLE=ON`: `bundle.sh --release`
+        doesn't register it here nor stop the running module, a second registered copy would
+        compete for the extension) and makes `dist/MLVDrive-<version>-macos.dmg`: the app, an
+        Applications shortcut, Install.txt (Gatekeeper's "Open Anyway", the two switches).
+        LZMA (ULMO): 11 MB; zlib (UDZO) made 97 MB, the pixel maps being 360 MB of text (gzip
+        -9: 84 MB: the Windows zip has grown with them too). The menu's Setup installs the
+        `mlvdrive` command in /usr/local/bin (an administrator's password). README: a macOS
+        section. Not done: Developer ID and notarization (an Apple Developer membership); the
+        DMG installed and run on another Mac.
+     7. Resolve on the Mac (no Resolve on this Mac for now).
    - **Needs:** nothing for development (ad hoc, above). For release: a Developer ID and
      notarization (Apple Developer Program), or Gatekeeper asks once. Xcode isn't needed to build
      (the Command Line Tools have the macOS 26.5 SDK with FSKit).

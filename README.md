@@ -2,7 +2,8 @@
 
 Shows Magic Lantern MLV clips as a drive of CinemaDNG sequences, created on the fly as they are
 read, so DaVinci Resolve (or any raw-capable app) imports MLV directly: no conversion, no extra
-disk space. Windows first (WinFsp); Linux and macOS later. Work in progress: see `PLAN.md`.
+disk space. Windows (WinFsp) and macOS 26 or later (FSKit, see [macOS](#macos)); Linux later.
+Work in progress: see `PLAN.md`.
 
 ## Building
 
@@ -160,6 +161,84 @@ settings file doesn't matter) where each clip's middle frame equals a fresh deco
 chart equal `mlvdrive_tool`'s; the cache keeping a long clip's start; read speed above real time; and a
 watched scratch folder where clips copied in, replaced and deleted show as they should while an
 open file keeps reading. Prints PASS / FAIL per check; exit code 0 when all pass.
+
+## macOS
+
+MLV Drive on macOS 26 (Tahoe) or later, Apple Silicon and Intel: a menu bar app, `MLV Drive.app`,
+carrying an FSKit file system extension where the drive runs (no macFUSE, no kernel extension).
+
+### Building
+
+The Xcode Command Line Tools (`xcode-select --install`: Apple clang and the macOS 26 SDK; Xcode
+itself isn't needed), CMake and Ninja (Homebrew):
+
+```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build            # build/MLV Drive.app (signed ad hoc, registered with macOS),
+                               # build/mlvdrive_tool
+tools/package-macos.sh         # dist/MLVDrive-<version>-macos.dmg: universal, in build-release
+```
+
+Each build updates `build/MLV Drive.app` in place and restarts its extension when no MLV Drive
+volume is mounted (otherwise the running one keeps its code until all are unmounted). Signing is ad
+hoc (`SIGN_IDENTITY` for a real identity), with designated requirements on the bundle identifiers,
+so macOS's permissions survive rebuilds. Keep one copy of the app registered at a time: a second
+(say, one in /Applications) competes for the extension.
+
+### Installing
+
+Open `MLVDrive-<version>-macos.dmg`, drag MLV Drive to Applications and open it there (macOS
+refuses an app not signed by a registered developer the first time: System Settings > Privacy &
+Security > Open Anyway). Then, once:
+
+- turn on its file system extension: System Settings > General > Login Items & Extensions >
+  File System Extensions > MLV Drive (quit and reopen System Settings if it isn't listed);
+- for clips on the Desktop, in Documents or on external or network drives: Privacy & Security >
+  Full Disk Access > + > MLV Drive (the extension's reads are checked against the app).
+
+The menu's Setup shows whether both are done and opens the right pane.
+
+### The menu bar app
+
+Its icon is a drive labelled MLV, white with a red light while mounted, grey while not. The menu
+has what the Windows tray app has: mount on `~/MLV Drive` (or a folder of your choice: macOS keeps
+/Volumes for itself), unmount, open in Finder, the MLV folders, the DNG options, test patterns,
+watching, mount when it starts, start at login, the settings file
+(`~/Library/Application Support/MLV Drive/mlvdrive.ini`, the same keys as on Windows; `drive` is
+the mount point), quit (unmounts). Setup also installs the `mlvdrive` command in /usr/local/bin.
+A failed mount at start is a notification.
+
+### From the command line
+
+```
+mlvdrive mount [MLV folder] [--mount-point=PATH] [--dng=16|packed] [--no-fix] [--timecode=count]
+               [--test-patterns] [--no-watch] [--cache=MB] [--read-ahead=N]
+mlvdrive unmount [mount point]
+mlvdrive rescan
+mount -F -t mlvdrive <MLV folder> <mount point>     # the same, by hand (-o format=packed,...)
+```
+
+Without a folder, `mlvdrive mount` shows the settings' folders. The drive stays mounted until
+unmounted (`umount`, Finder's eject, the menu).
+
+### Limits
+
+FSKit can't tell macOS what changed on a volume, and macOS keeps the names it has looked up: new
+clips in a watched folder show, and listings are always current, but a name looked up before
+keeps its first answer until the drive is mounted again: a clip replaced under the same name shows
+its old footage where it was looked at, and so on. The menu's "Refresh (mount again)" mounts again.
+Adding clips, the usual case, isn't affected.
+
+### Testing
+
+```
+tools/test-macos.sh <MLV folder> [--all]
+```
+
+Mounts the folder with the test patterns and checks: each clip's frames read in random order
+byte-identical to `mlvdrive_tool dng` (a sample, or every frame), each WAV identical to
+`mlvdrive_tool wav`, a chart, a watched scratch folder where clips are added, replaced and
+deleted, a rescan, the read speed, the unmount. PASS / FAIL per check; exit code: the failures.
 
 ## Credits
 
