@@ -589,9 +589,14 @@ in Resolve.
           session); a restart fixed it, then the installed app mounted at login. The app now
           says to restart the Mac for that error. Same for a user who moves or replaces the app
           after opening it.
-        - Development with an installed copy: a build registers `build/MLV Drive.app` beside it
-          (two copies, one extension): unregister and delete one, then restart the Mac; or build
-          with `-DMLVDRIVE_RELEASE_BUNDLE=ON` (not registered).
+        - Development with an installed copy: a build registered `build/MLV Drive.app` beside it
+          (two copies, one extension). `build.sh` (build.ps1's counterpart: clean, build,
+          install, uninstall, package, pkg) keeps one: with MLV Drive in /Applications, `build`
+          doesn't register its app (`-DMLVDRIVE_RELEASE_BUNDLE=ON`) and `install` puts the release
+          build there, in place (same path: FSKit's agent keeps finding the extension; checked:
+          replaced, opened, mounted at start, the extension switch and Full Disk Access kept).
+          `uninstall` refuses while the extension is on (no command turns it off; it would stay
+          on), then quits, unmounts, resets Full Disk Access, unregisters and deletes it.
      7. Resolve on the Mac (no Resolve on this Mac for now).
    - **Needs:** nothing for development (ad hoc, above). For release: a Developer ID and
      notarization (Apple Developer Program), or Gatekeeper asks once. Xcode isn't needed to build

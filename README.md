@@ -291,23 +291,27 @@ The Xcode Command Line Tools (`xcode-select --install`: Apple clang and the macO
 itself isn't needed), CMake and Ninja (Homebrew):
 
 ```
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build            # build/MLV Drive.app (signed ad hoc, registered with macOS),
-                               # build/mlvdrive_tool
-tools/package-macos.sh         # dist/MLVDrive-<version>-macos.dmg: universal, in build-release
+./build.sh              # build/MLV Drive.app, build/mlvdrive_tool
+./build.sh clean build
+./build.sh install      # the release app (universal) into /Applications, in place of the one there
+./build.sh uninstall    # removes it (turn its file system extension off first); keeps the settings
+./build.sh package      # dist/MLVDrive-<version>-macos.dmg (tools/package-macos.sh)
+./build.sh pkg          # build, then the disk image: what a release needs
 ```
 
-- Each build updates `build/MLV Drive.app` in place and restarts its extension when no MLV Drive
-  volume is mounted (otherwise the running one keeps its code until all are unmounted). Turn the
-  extension on and give Full Disk Access once, as in Installing.
+- **One copy at a time:** two registered copies of the app compete for the extension. Without MLV
+  Drive in /Applications, `build` registers `build/MLV Drive.app` (turn its extension on and give
+  it Full Disk Access once, as in Installing); with it installed, `build` doesn't, and
+  `./build.sh install` puts each build there. Removing or moving a copy that macOS has started:
+  restart the Mac (see Troubleshooting).
+- Each build updates the app in place and restarts its extension when no MLV Drive volume is
+  mounted (otherwise the running one keeps its code until all are unmounted).
 - Signing is ad hoc (`SIGN_IDENTITY` for a real identity), with designated requirements on the
   bundle identifiers, so macOS's permissions survive rebuilds.
-- **One copy at a time:** a build registers `build/MLV Drive.app`, which competes with an installed
-  copy for the extension. Uninstall one (unregister it:
-  `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u <app>`)
-  and restart the Mac; or build with `-DMLVDRIVE_RELEASE_BUNDLE=ON` (not registered).
-- `tools/package-macos.sh` builds in `build-release` with that option, universal (arm64 +
-  x86_64), and makes the disk image (LZMA: about 11 MB).
+- `install` and `package` build universal (arm64 + x86_64) in `build-release`; the disk image is
+  LZMA-compressed (about 11 MB).
+- By hand: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build`
+  (`-DMLVDRIVE_RELEASE_BUNDLE=ON`: not registered).
 
 ### Testing
 
