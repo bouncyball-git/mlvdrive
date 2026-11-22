@@ -25,6 +25,7 @@
 #pragma once
 
 #include "dng/dng_writer.h"
+#include "vfs/tree.h"
 
 #include <string>
 #include <vector>
@@ -60,5 +61,8 @@ unsigned cacheAutoMb();
 
 // "M" or "m:" -> "M:"; anything else as it is.
 std::wstring normalizeDrive(std::wstring drive);
+
+// How the drive's tree is built with these settings (DNG format, timecode, raw fixes, patterns).
+vfs::BuildOptions buildOptions(const Settings& settings);
 
 }  // namespace app

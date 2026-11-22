@@ -28,18 +28,6 @@ std::wstring EventSuffix(std::wstring mountPoint) {
     return mountPoint;
 }
 
-vfs::BuildOptions BuildOptionsOf(const Settings& s) {
-    vfs::BuildOptions options;
-    options.dng.output = s.format;
-    options.dng.timecode = s.timecode;
-    options.fix = s.rawFixes;
-    options.fixes.focusPixels = s.focusPixels;
-    options.fixes.badPixels = s.badPixels == 3 ? 3 : s.badPixels ? 1 : 0;  // aggressive: auto, searched harder
-    options.fixes.badPixelSearch = s.badPixels == 2 ? 1 : 0;
-    options.testPatterns = s.testPatterns;
-    return options;
-}
-
 }  // namespace
 
 std::wstring stopEventName(std::wstring mountPoint) {
@@ -196,7 +184,7 @@ bool Mounter::mount(const Settings& s, bool debug, const std::function<void(cons
 
     auto t0 = std::chrono::steady_clock::now();
     auto tree = std::make_shared<vfs::Tree>();
-    if (!tree->build(s.folders, BuildOptionsOf(s), log, error)) return false;
+    if (!tree->build(s.folders, buildOptions(s), log, error)) return false;
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (tree->clipCount() == 0) {
         std::string where;
@@ -272,7 +260,7 @@ bool Mounter::rescan(RescanResult* result, std::string* error) {
     RescanResult r;
     auto next = std::make_shared<vfs::Tree>();
     auto log = [&](const std::string& m) { r.skipped.push_back(m); };
-    if (!next->build(settings_.folders, BuildOptionsOf(settings_), log, error, tree_.get())) return false;
+    if (!next->build(settings_.folders, buildOptions(settings_), log, error, tree_.get())) return false;
 
     // Clips by where they came from: added, gone, or changed (opened again: a new entry).
     std::map<std::wstring, uint64_t> before, after;

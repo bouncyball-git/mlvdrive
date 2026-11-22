@@ -1,6 +1,7 @@
 #include "util/file.h"
 
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <system_error>
 
@@ -14,6 +15,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -70,6 +72,14 @@ bool fileExists(const std::string& utf8Path) {
     std::error_code ec;
     return std::filesystem::is_regular_file(u8(utf8Path), ec);
 }
+
+#ifndef _WIN32
+std::string homeFolder() {
+    if (const passwd* pw = getpwuid(getuid()); pw && pw->pw_dir && *pw->pw_dir) return pw->pw_dir;
+    const char* home = std::getenv("HOME");
+    return home ? home : ".";
+}
+#endif
 
 RandomAccessFile::~RandomAccessFile() { close(); }
 

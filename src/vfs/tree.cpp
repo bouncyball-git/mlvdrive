@@ -437,6 +437,25 @@ void Tree::addClip(Dir* parent, std::shared_ptr<ClipEntry> e) {
     clips_.push_back(std::move(e));
 }
 
+Node::Kind Tree::clipFile(const ClipEntry& c, const wchar_t* p, size_t len, uint32_t* frameOut) {
+    if (c.hasWav()) {
+        const std::wstring wav = wavName(c);
+        if (compareNames(p, len, wav.data(), wav.size()) == 0) return Node::Audio;
+    }
+    const size_t prefix = c.name.size() + 1;
+    if (len < prefix + 4 + 1 || compareNames(p, c.name.size(), c.name.data(), c.name.size()) != 0 ||
+        p[c.name.size()] != L'_')
+        return Node::None;
+    uint64_t frame = 0;
+    size_t i = prefix;
+    for (; i < len && *(p + i) >= L'0' && *(p + i) <= L'9' && i - prefix < 10; ++i) frame = frame * 10 + (p[i] - L'0');
+    if (i == prefix || frame >= c.source->frameCount()) return Node::None;
+    const std::wstring expected = frameName(c, uint32_t(frame));  // leading zeros, extension
+    if (compareNames(p, len, expected.data(), expected.size()) != 0) return Node::None;
+    *frameOut = uint32_t(frame);
+    return Node::Frame;
+}
+
 Node Tree::find(const wchar_t* path) const {
     Node n;
     const Dir* dir = &root_;
@@ -450,30 +469,10 @@ Node Tree::find(const wchar_t* path) const {
         while (*rest == L'\\') ++rest;
 
         if (dir->clip) {
-            // A frame: NAME_000123.dng, or the audio: NAME.wav; the last part of the path.
+            // A frame or the audio: the last part of the path.
             if (*rest) return n;
-            const ClipEntry& c = *dir->clip;
-            if (c.hasWav()) {
-                const std::wstring wav = wavName(c);
-                if (compareNames(p, len, wav.data(), wav.size()) == 0) {
-                    n.kind = Node::Audio;
-                    n.dir = dir;
-                    return n;
-                }
-            }
-            const size_t prefix = c.name.size() + 1;
-            if (len < prefix + 4 + 1 || compareNames(p, c.name.size(), c.name.data(), c.name.size()) != 0 ||
-                p[c.name.size()] != L'_')
-                return n;
-            uint64_t frame = 0;
-            size_t i = prefix;
-            for (; i < len && *(p + i) >= L'0' && *(p + i) <= L'9' && i - prefix < 10; ++i) frame = frame * 10 + (p[i] - L'0');
-            if (i == prefix || frame >= c.source->frameCount()) return n;
-            const std::wstring expected = frameName(c, uint32_t(frame));  // leading zeros, extension
-            if (compareNames(p, len, expected.data(), expected.size()) != 0) return n;
-            n.kind = Node::Frame;
-            n.dir = dir;
-            n.frame = uint32_t(frame);
+            n.kind = clipFile(*dir->clip, p, len, &n.frame);
+            if (n.kind != Node::None) n.dir = dir;
             return n;
         }
 

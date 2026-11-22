@@ -23,6 +23,12 @@ std::FILE* openFile(const std::string& utf8Path, const char* mode);
 
 bool fileExists(const std::string& utf8Path);
 
+#ifndef _WIN32
+// The user's home folder (UTF-8): the account's, not $HOME, which in a sandboxed process (an
+// FSKit extension) is its container.
+std::string homeFolder();
+#endif
+
 class RandomAccessFile {
 public:
     RandomAccessFile() = default;

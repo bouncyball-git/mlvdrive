@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
+# macOS: 26 or later (FSKit's folder-backed volumes); set before project() for every target.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "26.0" CACHE STRING "Minimum macOS version")
+endif()
 project(MLVDrive VERSION 0.8.0 LANGUAGES C CXX)
 # The version everywhere: the programs, the DNG Software tag, the tray app's resources and the
 # release zip's name (build.ps1 reads it from the line above).
@@ -55,7 +59,8 @@ if(MSVC)
     target_compile_options(mlv_vfs PRIVATE /W3 /O2)
 endif()
 
-# --- mlvdrive: the drive (Windows: WinFsp, its DLL loaded from WinFsp's install folder) ---
+# --- mlvdrive: the drive (Windows: WinFsp, its DLL loaded from WinFsp's install folder; macOS:
+# an FSKit module in MLV Drive.app) ---
 if(WIN32)
     get_filename_component(_winfsp_reg "[HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\WinFsp;InstallDir]" ABSOLUTE)
     if(EXISTS "${_winfsp_reg}/inc/winfsp/winfsp.h")
@@ -100,6 +105,24 @@ if(WIN32)
     target_link_libraries(mlvdrive_tray PRIVATE mlvdrive_app comctl32)
     target_link_options(mlvdrive_tray PRIVATE /MANIFEST:NO)  # tray.rc has it
     target_compile_options(mlvdrive_tray PRIVATE /W3)
+elseif(APPLE)
+    enable_language(OBJCXX)
+    # The FSKit module: the drive's engine runs in it (an app extension, MLVDriveFS.appex).
+    add_executable(MLVDriveFS src/fs/fskit_fs.mm src/app/settings.cpp)
+    target_compile_options(MLVDriveFS PRIVATE -fobjc-arc -Wall -Wextra -Wno-unused-parameter)
+    target_link_libraries(MLVDriveFS PRIVATE mlv_vfs "-framework Foundation" "-framework FSKit")
+
+    # MLV Drive.app: carries the module (for now a minimal app; the menu bar app comes later).
+    add_executable(mlvdrive_host src/macos/host_main.mm)
+    set_target_properties(mlvdrive_host PROPERTIES OUTPUT_NAME "MLV Drive")
+    target_compile_options(mlvdrive_host PRIVATE -fobjc-arc)
+    target_link_libraries(mlvdrive_host PRIVATE "-framework Foundation")
+
+    # Assembled, signed (ad hoc, or $SIGN_IDENTITY) and registered after every build.
+    add_custom_target(mlvdrive_bundle ALL
+        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/src/macos/bundle.sh" "${CMAKE_BINARY_DIR}" "${PROJECT_VERSION}"
+        DEPENDS MLVDriveFS mlvdrive_host
+        COMMENT "Assembling MLV Drive.app")
 endif()
 
 # --- mlvdrive_tool: clip info, one DNG to disk, timings ---

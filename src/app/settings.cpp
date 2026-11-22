@@ -65,6 +65,18 @@ unsigned cacheAutoMb() {
     return unsigned(std::clamp<uint64_t>(mb, 512, 16384));
 }
 
+vfs::BuildOptions buildOptions(const Settings& s) {
+    vfs::BuildOptions options;
+    options.dng.output = s.format;
+    options.dng.timecode = s.timecode;
+    options.fix = s.rawFixes;
+    options.fixes.focusPixels = s.focusPixels;
+    options.fixes.badPixels = s.badPixels == 3 ? 3 : s.badPixels ? 1 : 0;  // aggressive: auto, searched harder
+    options.fixes.badPixelSearch = s.badPixels == 2 ? 1 : 0;
+    options.testPatterns = s.testPatterns;
+    return options;
+}
+
 std::wstring normalizeDrive(std::wstring drive) {
     if ((drive.size() == 1 || (drive.size() == 2 && drive[1] == L':')) && std::iswalpha(wint_t(drive[0])))
         return std::wstring(1, wchar_t(std::towupper(wint_t(drive[0])))) + L":";
@@ -80,11 +92,9 @@ std::wstring settingsPath() {
     if (path.empty()) path = L".";
     return path + L"\\MLV Drive\\mlvdrive.ini";
 #elif defined(__APPLE__)
-    const char* home = std::getenv("HOME");
-    return Wide(std::string(home ? home : ".") + "/Library/Application Support/MLV Drive/mlvdrive.ini");
+    return Wide(util::homeFolder() + "/Library/Application Support/MLV Drive/mlvdrive.ini");
 #else
-    const char* home = std::getenv("HOME");
-    return Wide(std::string(home ? home : ".") + "/.config/mlvdrive/mlvdrive.ini");
+    return Wide(util::homeFolder() + "/.config/mlvdrive/mlvdrive.ini");
 #endif
 }
 

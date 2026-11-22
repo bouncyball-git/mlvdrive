@@ -98,6 +98,10 @@ public:
     // A path as WinFsp passes it ("\M21-1642\M21-1642_000012.dng"; "\" is the root).
     Node find(const wchar_t* path) const;
 
+    // A clip folder's file by name (`len` characters): a frame ("M21-1642_000012.dng", sets
+    // `frame`), the audio ("M21-1642.wav"), or None. Case-insensitive, as find().
+    static Node::Kind clipFile(const ClipEntry& clip, const wchar_t* name, size_t len, uint32_t* frame);
+
     // What differs from `before` to `after`: folders and files added, removed or changed.
     static std::vector<Change> changes(const Tree& before, const Tree& after);
 

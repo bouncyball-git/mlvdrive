@@ -321,14 +321,13 @@ std::vector<std::string> defaultPixelMapFolders() {
     namespace fs = std::filesystem;
     std::error_code ec;
 #ifdef __APPLE__
-    if (const char* home = std::getenv("HOME"))
-        folders.push_back(std::string(home) + "/Library/Application Support/MLV Drive/pixelmaps");
+    folders.push_back(util::homeFolder() + "/Library/Application Support/MLV Drive/pixelmaps");
     std::string exe(4096, '\0');
     uint32_t size = uint32_t(exe.size());
     if (_NSGetExecutablePath(exe.data(), &size) != 0) exe.clear();
     else exe.resize(std::strlen(exe.c_str()));
 #else
-    if (const char* home = std::getenv("HOME")) folders.push_back(std::string(home) + "/.config/mlvdrive/pixelmaps");
+    folders.push_back(util::homeFolder() + "/.config/mlvdrive/pixelmaps");
     std::string exe = fs::read_symlink("/proc/self/exe", ec).string();
 #endif
     if (!exe.empty()) {
