@@ -526,9 +526,23 @@ in Resolve.
           footage (64 -> 81 frames, frame 1 identical) while a file opened before reads the old;
           deleted: gone from the listing after 1.7 s; watch=0: listed 0.1 s after `mlvdrive
           rescan`. The whole script: 0 failed (Desktop clips, chart, live, rescan, unmount).
-     5. Menu bar app (AppKit, Objective-C++): the tray app's menu, `NSOpenPanel`,
-        `SMAppService` (start at login), user notifications, open in Finder; template icon +
-        `.icns` from `tools/make_icons.py`.
+     5. Menu bar app (written; checked so far without clicking): `src/macos/menubar.mm` is
+        MLV Drive.app now (the minimal host is gone). The tray app's menu: the state (mounted on,
+        clips, GB: from the volume's statistics), mount / unmount / open in Finder / rescan
+        (watch off) / "Refresh (mount again)" (FSKit's limit), MLV folders (add with
+        `NSOpenPanel`, remove), mount point (~/MLV Drive or a chosen folder), DNG (format, raw
+        fixes, focus and bad pixels, timecode), test patterns, watch, a Setup submenu (the file
+        system extension on? read from FSKit's enabled list; Full Disk Access? the privacy
+        database readable), mount when it starts, start at login (`SMAppService`), edit /
+        reload the settings file, quit (unmounts). It mounts MLV Drive's settings folder (the
+        module then reads the settings); a change while mounted saves and mounts again; a busy
+        unmount asks before forcing; the state is read from the system every 3 s and when the
+        menu opens (an eject in Finder shows); a first start without folders asks for one; the
+        module turned off: a dialog opening the pane. Icon: a drive drawn as a template image
+        (filled while mounted). Checked: mount at start from the settings file (the 4 Desktop
+        clips), an unmount from outside noticed, `mlvdrive mount` without a folder, quit
+        unmounts. To do: a look at the menu by hand, the app icon (.icns, `make_icons.py`),
+        user notifications for background failures.
      6. Build: CMake + Ninja for the code, a script assembling and signing the `.app` / `.appex`
         (entitlements); universal (arm64 + x86_64); Developer ID, notarization, a DMG.
         `tools/test.ps1`'s checks for macOS.
