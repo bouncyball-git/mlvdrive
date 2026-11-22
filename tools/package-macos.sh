@@ -46,6 +46,10 @@ Installing
 6. Mount from the menu: the drive is ~/MLV Drive (your home folder), one folder per clip. Files
    show as "Locked" in Preview: the drive is read-only, that is normal.
 
+Focus pixels (EOS M, M2, 100D, 650D, 700D): the usual video modes are fixed without a map. For
+the others, get the maps from https://github.com/ilia3101/MLV-App/tree/master/pixel_maps and put
+them in ~/Library/Application Support/MLV Drive/pixelmaps (or beside the clips).
+
 If a mount fails with "couldn't start MLV Drive's file system extension" (or "extensionKit error
 2"): MLV Drive was moved or replaced after it was first opened. Restart the Mac.
 

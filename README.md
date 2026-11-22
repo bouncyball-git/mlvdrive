@@ -92,9 +92,10 @@ under the generic name; then in `%APPDATA%\MLV Drive\pixelmaps` (macOS: `~/Libra
 Support/MLV Drive/pixelmaps`); then in `pixelmaps` beside the programs. None come with MLV Drive:
 for the EOS M, 100D, 650D and 700D the focus pixels of the usual video modes are worked out
 without a map, and for the other modes (crop, other sizes) or the EOS M2, copy the maps you need
-from the `pixel_maps` folder of MLV-App (https://github.com/ilia3101/MLV-App) into
-`%APPDATA%\MLV Drive\pixelmaps`. Bad pixels are searched on the first frame (or read from a
-`.bpm` map).
+from MLV-App's collection, https://github.com/ilia3101/MLV-App/tree/master/pixel_maps (named by
+camera id and raw size, as above), into `%APPDATA%\MLV Drive\pixelmaps` (macOS:
+`~/Library/Application Support/MLV Drive/pixelmaps`), or beside the clips. Bad pixels are
+searched on the first frame (or read from a `.bpm` map).
 
 The cache keeps the frames read most recently, except that a clip read straight through keeps
 its start: a clip longer than the cache, played again, finds that part made.
@@ -224,6 +225,10 @@ install: no macFUSE, no kernel extension.
   the mount point).
 - **The mount point** is `~/MLV Drive` by default, or a folder you choose: macOS doesn't let apps
   mount in /Volumes.
+- **Focus pixels** (EOS M, M2, 100D, 650D, 700D): the usual video modes are fixed without a map;
+  for the others, get the maps from https://github.com/ilia3101/MLV-App/tree/master/pixel_maps
+  (`<camera id>_<raw width>x<raw height>.fpm`) and put them in
+  `~/Library/Application Support/MLV Drive/pixelmaps` (or beside the clips). See Settings above.
 
 ### From the command line
 
@@ -309,7 +314,7 @@ itself isn't needed), CMake and Ninja (Homebrew):
 - Signing is ad hoc (`SIGN_IDENTITY` for a real identity), with designated requirements on the
   bundle identifiers, so macOS's permissions survive rebuilds.
 - `install` and `package` build universal (arm64 + x86_64) in `build-release`; the disk image is
-  LZMA-compressed (about 11 MB).
+  LZMA-compressed (under 1 MB).
 - By hand: `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build`
   (`-DMLVDRIVE_RELEASE_BUNDLE=ON`: not registered).
 

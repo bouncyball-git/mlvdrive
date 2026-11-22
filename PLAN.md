@@ -572,8 +572,11 @@ in Resolve.
         doesn't register it here nor stop the running module, a second registered copy would
         compete for the extension) and makes `dist/MLVDrive-<version>-macos.dmg`: the app, an
         Applications shortcut, Install.txt (Gatekeeper's "Open Anyway", the two switches).
-        LZMA (ULMO): 11 MB; zlib (UDZO) made 97 MB, the pixel maps being 360 MB of text (gzip
-        -9: 84 MB: the Windows zip has grown with them too). The menu's Setup installs the
+        LZMA (ULMO): 11 MB with the pixel maps (zlib, UDZO: 97 MB; 360 MB of text); since the
+        maps aren't bundled (`6e6e5bd`), 388 KB. Install.txt and the README point to
+        https://github.com/ilia3101/MLV-App/tree/master/pixel_maps for the focus pixel maps
+        (into `~/Library/Application Support/MLV Drive/pixelmaps` or beside the clips). The
+        menu's Setup installs the
         `mlvdrive` command in /usr/local/bin (an administrator's password). README: a macOS
         section. Not done: Developer ID and notarization (an Apple Developer membership); the
         DMG installed and run on another Mac.
