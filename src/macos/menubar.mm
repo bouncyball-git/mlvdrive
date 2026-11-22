@@ -4,7 +4,7 @@
 // settings folder as the source: the module then shows the settings' folders with the settings'
 // options. A setting changed while mounted mounts again with it.
 //
-// Its icon: a drive, filled while mounted (a template image: it follows the menu bar's colour).
+// Its icon: a desktop drive labelled MLV, white with a red light while mounted, grey while not.
 // The state is read from the system (getmntinfo) every 3 seconds and when the menu opens, so an
 // eject in Finder or a `umount` shows.
 //
@@ -116,29 +116,51 @@ int runTool(NSString* path, NSArray<NSString*>* args, NSString** err) {
     return task.terminationStatus;
 }
 
-// The menu bar icon: a drive, filled while mounted.
+// The menu bar icon: a desktop drive seen slightly from above (a lighter top face over the front
+// panel), MLV on the front in black, a status light and two screws; white with a red light while
+// mounted, grey with a grey light while not. Fixed colours, not a template image (a template is
+// one colour: no black lettering, no red light); the dark outline keeps it clear on a light
+// menu bar too.
 NSImage* driveIcon(bool mounted) {
-    NSImage* image = [NSImage imageWithSize:NSMakeSize(18, 18)
-                                    flipped:NO
-                             drawingHandler:^BOOL(NSRect) {
-                                 [NSColor.blackColor set];
-                                 NSBezierPath* body = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(1.5, 4.5, 15, 9)
-                                                                                      xRadius:2
-                                                                                      yRadius:2];
-                                 body.lineWidth = 1.4;
-                                 if (mounted) {
-                                     [body fill];
-                                     [[NSColor colorWithWhite:0 alpha:0] set];
-                                     [NSGraphicsContext.currentContext setCompositingOperation:NSCompositingOperationClear];
-                                     NSRectFill(NSMakeRect(11.5, 7.5, 2.5, 2.5));  // the light, cut out
-                                 } else {
-                                     [body stroke];
-                                     NSRectFill(NSMakeRect(11.5, 7.5, 2.5, 2.5));
-                                 }
-                                 return YES;
-                             }];
-    [image setTemplate:YES];  // (`template` is a C++ keyword)
-    return image;
+    return [NSImage imageWithSize:NSMakeSize(30, 18)
+                          flipped:NO
+                   drawingHandler:^BOOL(NSRect) {
+                       auto grey = [](CGFloat w) { return [NSColor colorWithWhite:w alpha:1]; };
+                       NSColor* line = grey(0.22);
+                       [line setStroke];
+                       NSBezierPath* top = [NSBezierPath bezierPath];
+                       [top moveToPoint:NSMakePoint(1.5, 11.5)];
+                       [top lineToPoint:NSMakePoint(28.5, 11.5)];
+                       [top lineToPoint:NSMakePoint(25.5, 16.5)];
+                       [top lineToPoint:NSMakePoint(4.5, 16.5)];
+                       [top closePath];
+                       top.lineWidth = 1;
+                       top.lineJoinStyle = NSLineJoinStyleRound;
+                       [(mounted ? grey(0.82) : grey(0.50)) setFill];
+                       [top fill];
+                       [top stroke];
+                       NSBezierPath* front = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(1.5, 1.5, 27, 10)
+                                                                            xRadius:1.5
+                                                                            yRadius:1.5];
+                       front.lineWidth = 1;
+                       [(mounted ? NSColor.whiteColor : grey(0.64)) setFill];
+                       [front fill];
+                       [front stroke];
+                       NSDictionary* text = @{
+                           NSFontAttributeName : [NSFont systemFontOfSize:7.5 weight:NSFontWeightBold],
+                           NSForegroundColorAttributeName : NSColor.blackColor,
+                           NSKernAttributeName : @0.2,
+                       };
+                       NSString* label = @"MLV";
+                       const NSSize size = [label sizeWithAttributes:text];
+                       [label drawAtPoint:NSMakePoint(11.5 - size.width / 2, 6.5 - size.height / 2) withAttributes:text];
+                       [(mounted ? [NSColor colorWithRed:0.9 green:0.1 blue:0.1 alpha:1] : grey(0.4)) setFill];
+                       [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(22.5, 5, 3, 3)] fill];  // the light
+                       [line setFill];
+                       NSRectFill(NSMakeRect(3, 3, 1, 1));  // the screws
+                       NSRectFill(NSMakeRect(26, 3, 1, 1));
+                       return YES;
+                   }];
 }
 
 using Action = void (^)(void);
@@ -175,7 +197,7 @@ Action when(bool enabled, Action action) { return enabled ? action : (Action)nil
         }
     }
     [self loadSettings];
-    _item = [NSStatusBar.systemStatusBar statusItemWithLength:NSSquareStatusItemLength];
+    _item = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
     _item.button.toolTip = [NSString stringWithFormat:@"%@ %s", kAppName, MLVDRIVE_VERSION];
     NSMenu* menu = [[NSMenu alloc] init];
     menu.delegate = self;

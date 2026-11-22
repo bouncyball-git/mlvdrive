@@ -538,8 +538,10 @@ in Resolve.
         module then reads the settings); a change while mounted saves and mounts again; a busy
         unmount asks before forcing; the state is read from the system every 3 s and when the
         menu opens (an eject in Finder shows); a first start without folders asks for one; the
-        module turned off: a dialog opening the pane. Icon: a drive drawn as a template image
-        (filled while mounted). Checked: mount at start from the settings file (the 4 Desktop
+        module turned off: a dialog opening the pane. Icon: a desktop drive (top face in perspective over the front
+        panel, 28 x 15 pt) with MLV on the front in black, a status light and two screws; white
+        with a red light while mounted, grey while not (fixed colours: a template image is one
+        colour). Checked: mount at start from the settings file (the 4 Desktop
         clips), an unmount from outside noticed, `mlvdrive mount` without a folder, quit
         unmounts. To do: a look at the menu by hand, the app icon (.icns, `make_icons.py`),
         user notifications for background failures.
