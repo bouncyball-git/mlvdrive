@@ -520,11 +520,12 @@ in Resolve.
           signing), stops the old module when nothing is mounted (the next mount would run the
           old code; a mount right after needs a moment), and signs ad hoc with identifier-based
           designated requirements (an ad hoc signature's own is its hash: Full Disk Access was
-          lost at every build; now kept, after granting it once more).
+          lost at every build, and macOS added a new entry, switched off, each time; now kept: checked
+          across a rebuild of the app and the module).
         - Checked (`tools/test-macos.sh`): a clip copied in listed after 1.9 s; replaced: the new
           footage (64 -> 81 frames, frame 1 identical) while a file opened before reads the old;
           deleted: gone from the listing after 1.7 s; watch=0: listed 0.1 s after `mlvdrive
-          rescan`.
+          rescan`. The whole script: 0 failed (Desktop clips, chart, live, rescan, unmount).
      5. Menu bar app (AppKit, Objective-C++): the tray app's menu, `NSOpenPanel`,
         `SMAppService` (start at login), user notifications, open in Finder; template icon +
         `.icns` from `tools/make_icons.py`.
