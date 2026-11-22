@@ -574,6 +574,21 @@ in Resolve.
         `mlvdrive` command in /usr/local/bin (an administrator's password). README: a macOS
         section. Not done: Developer ID and notarization (an Apple Developer membership); the
         DMG installed and run on another Mac.
+        - Installation tested (0.9.0 DMG, marked as downloaded by Safari, on this Mac cleaned of
+          the development copies: unregistered, their permissions reset with `tccutil`, the
+          extension switches off, the settings removed): Gatekeeper's "MLV Drive.app Not Opened"
+          (Done, then Privacy & Security > Open Anyway); then every mount failed with
+          "extensionKit error 2": **FSKit's agent (`fskit_agent`) kept the deleted development
+          copy's path** for the extension (`Service could not initialize: access(.../build/MLV
+          Drive.app/...)`) although only /Applications' copy was registered. It can't be
+          restarted (SIGTERM ignored; `launchctl kickstart`: "not permitted while System
+          Integrity Protection is engaged"), it outlived a logout (the user's background
+          session); a restart fixed it, then the installed app mounted at login. The app now
+          says to restart the Mac for that error. Same for a user who moves or replaces the app
+          after opening it.
+        - Development with an installed copy: a build registers `build/MLV Drive.app` beside it
+          (two copies, one extension): unregister and delete one, then restart the Mac; or build
+          with `-DMLVDRIVE_RELEASE_BUNDLE=ON` (not registered).
      7. Resolve on the Mac (no Resolve on this Mac for now).
    - **Needs:** nothing for development (ad hoc, above). For release: a Developer ID and
      notarization (Apple Developer Program), or Gatekeeper asks once. Xcode isn't needed to build

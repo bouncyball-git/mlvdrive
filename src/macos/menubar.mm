@@ -328,6 +328,12 @@ Action when(bool enabled, Action action) { return enabled ? action : (Action)nil
     // mount's own words, made plain: the module refuses a source with no clips while loading it.
     if ([err containsString:@"Loading resource"] && [err containsString:@"No such file"])
         _lastError = @"no MLV clips in the folders (or MLV Drive can't read them)";
+    else if ([err containsString:@"extensionKit.errorDomain error 2"])
+        // FSKit's agent (fskit_agent) remembers where the extension was: if the app was moved,
+        // replaced or an old copy deleted since, it can't start. Only a restart clears it (System
+        // Integrity Protection: it can't be restarted otherwise; it may outlive a logout).
+        _lastError = @"macOS couldn't start MLV Drive's file system extension. If MLV Drive was moved or "
+                     @"replaced since it was first opened, restart the Mac.";
     else if ([err containsString:@"Resource busy"])
         _lastError = @"macOS still holds the folders from an earlier mount: try again in a moment";
     else
