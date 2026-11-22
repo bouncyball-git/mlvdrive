@@ -164,8 +164,122 @@ open file keeps reading. Prints PASS / FAIL per check; exit code 0 when all pass
 
 ## macOS
 
-MLV Drive on macOS 26 (Tahoe) or later, Apple Silicon and Intel: a menu bar app, `MLV Drive.app`,
-carrying an FSKit file system extension where the drive runs (no macFUSE, no kernel extension).
+MLV Drive for macOS 26 (Tahoe) or later, on Apple Silicon and Intel Macs: a menu bar app, `MLV
+Drive.app`, with a built-in FSKit file system extension where the drive runs. Nothing else to
+install: no macFUSE, no kernel extension.
+
+### Installing
+
+1. **Open the disk image** `MLVDrive-<version>-macos.dmg`, drag **MLV Drive** to
+   **Applications**, and open it **from Applications**. (Not from the disk image, and don't move
+   the app after opening it: see Troubleshooting.)
+2. **Allow it to open.** MLV Drive isn't signed by a registered Apple developer, so macOS refuses
+   it the first time: *"MLV Drive.app" Not Opened — Apple could not verify "MLV Drive.app" is
+   free of malware...*. Click **Done** (not Move to Trash). Then open **System Settings >
+   Privacy & Security**, scroll down to **Security**, where it says *"MLV Drive.app" was blocked
+   to protect your Mac*, and click **Open Anyway**; confirm with your password or Touch ID, and
+   **Open Anyway** once more. From then on it opens normally.
+3. **First start.** MLV Drive appears in the menu bar (a drive labelled MLV) and asks for a folder
+   of MLV clips: **Choose a Folder...** (clips in its subfolders count too; more folders can be
+   added later). macOS asks whether MLV Drive may send notifications: allow them, they report a
+   mount that fails while you aren't looking (at login).
+4. **Turn on the file system extension** (once). The first mount says *Turn on MLV Drive's file
+   system extension*: **Open System Settings** goes to **General > Login Items & Extensions**;
+   there, click **ⓘ** beside **File System Extensions** and switch **MLV Drive** on. If it isn't
+   listed, quit System Settings (⌘Q) and open it again: it lists what it found when it opened.
+5. **Give it Full Disk Access** (once), for clips on the Desktop, in Documents or Downloads, in
+   iCloud Drive or on external or network drives: macOS protects those places, and the extension
+   can only read them with the app's Full Disk Access (allowing access to a single folder isn't
+   passed on to it). MLV Drive's menu > **Setup** > *Full Disk Access: off* opens **Privacy &
+   Security > Full Disk Access**: switch **MLV Drive** on, or add it with **+** (Applications >
+   MLV Drive) if it isn't listed. Clips elsewhere (a folder of your own in your home folder, say)
+   don't need it.
+6. **Mount** from the menu. The drive shows in **`~/MLV Drive`** (your home folder; Finder > Go >
+   Home), one folder per clip. MLV Drive's menu > **Setup** should now show both items on.
+7. Optional, in the menu: **Start at login** (and **Mount when MLV Drive starts**, on by default,
+   mounts it then), and **Setup > Install the mlvdrive command** (for Terminal; asks for an
+   administrator's password).
+
+### Using it
+
+- **The icon:** white with a red light while mounted, grey while not. Click it for the menu: the
+  state (clips, size), **Open ~/MLV Drive in Finder**, **Refresh (mount again)**, **Unmount**,
+  the MLV folders (add, remove), the mount point, the DNG options (16-bit or packed, raw
+  corrections, focus and bad pixels, timecode), test patterns, watching the folders, Setup, the
+  settings file, **Quit** (unmounts).
+- **The drive:** each clip is a folder of `NAME_000000.dng ...` files and `NAME.wav` when it has
+  audio, made as they are read. In DaVinci Resolve, browse to `~/MLV Drive` in the Media Storage
+  and add a clip's folder: it comes in as one clip. Any raw-capable app (Preview too) opens the
+  DNGs.
+- **Read-only:** nothing on the drive can be changed. Preview and others show the files as
+  **Locked**: that only means they can't be saved in place (duplicate or export to edit a frame).
+- **Changes:** clips copied into a watched folder show on the drive about 2 seconds after the copy
+  finishes. A setting changed in the menu while mounted mounts the drive again with it (if a
+  program has a file open, MLV Drive asks first). The settings are kept in
+  `~/Library/Application Support/MLV Drive/mlvdrive.ini` (the same keys as on Windows; `drive` is
+  the mount point).
+- **The mount point** is `~/MLV Drive` by default, or a folder you choose: macOS doesn't let apps
+  mount in /Volumes.
+
+### From the command line
+
+After **Setup > Install the mlvdrive command** (or as
+`/Applications/MLV\ Drive.app/Contents/MacOS/mlvdrive`):
+
+```
+mlvdrive mount [MLV folder] [--mount-point=PATH] [--dng=16|packed] [--no-fix] [--timecode=count]
+               [--test-patterns] [--no-watch] [--cache=MB] [--read-ahead=N]
+mlvdrive unmount [mount point]
+mlvdrive rescan
+mount -F -t mlvdrive <MLV folder> <mount point>     # the same, by hand (-o format=packed,...)
+```
+
+Without a folder, `mlvdrive mount` shows the settings' folders. The drive stays mounted until
+unmounted (`mlvdrive unmount`, `umount`, Finder's eject or the menu).
+
+### Limits
+
+- **Replaced clips:** macOS can't be told what changed on an FSKit volume, and keeps the names it
+  has looked up. Listings are always current and new clips always show, but a name already looked
+  up keeps its first answer until the drive is mounted again: a clip replaced under the same name
+  shows its old footage where it was open, a deleted one stays reachable by name. **Refresh
+  (mount again)** in the menu fixes that. Adding clips, the usual case, isn't affected.
+- **macOS 26 or later** (FSKit's folder-backed volumes are new in 26).
+
+### Troubleshooting
+
+- ***"MLV Drive.app" Not Opened*** at the first start: step 2 above.
+- ***Turn on MLV Drive's file system extension*** / *the file system extension is turned off*:
+  step 4 above.
+- ***macOS couldn't start MLV Drive's file system extension*** (older versions: *Probing
+  resource... com.apple.extensionKit.errorDomain error 2*): macOS still points to where MLV Drive
+  was before it was moved, replaced by another copy or deleted. **Restart the Mac** (logging out
+  isn't always enough). To avoid it: open MLV Drive only from Applications, and keep one copy.
+- ***no MLV clips in the folders (or MLV Drive can't read them)***: check the folders in the menu
+  have .MLV files; if they are on the Desktop, in Documents, in iCloud Drive or on an external or
+  network drive, give MLV Drive Full Disk Access (step 5).
+- ***macOS still holds the folders from an earlier mount***: try again in a moment; if it stays,
+  restart the Mac.
+- ***MLV Drive is in use*** when unmounting: a program (Resolve, Finder's preview) has a file open.
+  Close it, or **Unmount Anyway** (the program loses the file).
+- **A clip shows old footage:** see Limits; **Refresh (mount again)**.
+- **The drive doesn't show in Finder's sidebar:** it is a folder in your home folder,
+  `~/MLV Drive` (drag it to the sidebar's Favorites to keep it there).
+- **More detail:** the extension's log, in Terminal:
+  `log show --last 10m --predicate 'subsystem == "org.mlvdrive.fs"'`.
+
+### Uninstalling
+
+In this order (the extension's switch and Full Disk Access stay set after the app is gone):
+
+1. **Quit** MLV Drive from its menu (it unmounts).
+2. System Settings > General > Login Items & Extensions: **File System Extensions (ⓘ) > MLV Drive
+   off**, and remove MLV Drive from **Open at Login** if it is there.
+3. Privacy & Security > **Full Disk Access**: select MLV Drive, **−**.
+4. Delete **MLV Drive** from Applications.
+5. If wanted: the settings, `~/Library/Application Support/MLV Drive` (with any pixel maps of your
+   own); the empty `~/MLV Drive` folder; the command, `sudo rm /usr/local/bin/mlvdrive`.
+6. Before installing another copy somewhere else, restart the Mac (see Troubleshooting).
 
 ### Building
 
@@ -179,55 +293,17 @@ cmake --build build            # build/MLV Drive.app (signed ad hoc, registered 
 tools/package-macos.sh         # dist/MLVDrive-<version>-macos.dmg: universal, in build-release
 ```
 
-Each build updates `build/MLV Drive.app` in place and restarts its extension when no MLV Drive
-volume is mounted (otherwise the running one keeps its code until all are unmounted). Signing is ad
-hoc (`SIGN_IDENTITY` for a real identity), with designated requirements on the bundle identifiers,
-so macOS's permissions survive rebuilds. Keep one copy of the app registered at a time: a second
-(say, one in /Applications) competes for the extension.
-
-### Installing
-
-Open `MLVDrive-<version>-macos.dmg`, drag MLV Drive to Applications and open it there (macOS
-refuses an app not signed by a registered developer the first time: System Settings > Privacy &
-Security > Open Anyway). Then, once:
-
-- turn on its file system extension: System Settings > General > Login Items & Extensions >
-  File System Extensions > MLV Drive (quit and reopen System Settings if it isn't listed);
-- for clips on the Desktop, in Documents or on external or network drives: Privacy & Security >
-  Full Disk Access > + > MLV Drive (the extension's reads are checked against the app).
-
-The menu's Setup shows whether both are done and opens the right pane.
-
-### The menu bar app
-
-Its icon is a drive labelled MLV, white with a red light while mounted, grey while not. The menu
-has what the Windows tray app has: mount on `~/MLV Drive` (or a folder of your choice: macOS keeps
-/Volumes for itself), unmount, open in Finder, the MLV folders, the DNG options, test patterns,
-watching, mount when it starts, start at login, the settings file
-(`~/Library/Application Support/MLV Drive/mlvdrive.ini`, the same keys as on Windows; `drive` is
-the mount point), quit (unmounts). Setup also installs the `mlvdrive` command in /usr/local/bin.
-A failed mount at start is a notification.
-
-### From the command line
-
-```
-mlvdrive mount [MLV folder] [--mount-point=PATH] [--dng=16|packed] [--no-fix] [--timecode=count]
-               [--test-patterns] [--no-watch] [--cache=MB] [--read-ahead=N]
-mlvdrive unmount [mount point]
-mlvdrive rescan
-mount -F -t mlvdrive <MLV folder> <mount point>     # the same, by hand (-o format=packed,...)
-```
-
-Without a folder, `mlvdrive mount` shows the settings' folders. The drive stays mounted until
-unmounted (`umount`, Finder's eject, the menu).
-
-### Limits
-
-FSKit can't tell macOS what changed on a volume, and macOS keeps the names it has looked up: new
-clips in a watched folder show, and listings are always current, but a name looked up before
-keeps its first answer until the drive is mounted again: a clip replaced under the same name shows
-its old footage where it was looked at, and so on. The menu's "Refresh (mount again)" mounts again.
-Adding clips, the usual case, isn't affected.
+- Each build updates `build/MLV Drive.app` in place and restarts its extension when no MLV Drive
+  volume is mounted (otherwise the running one keeps its code until all are unmounted). Turn the
+  extension on and give Full Disk Access once, as in Installing.
+- Signing is ad hoc (`SIGN_IDENTITY` for a real identity), with designated requirements on the
+  bundle identifiers, so macOS's permissions survive rebuilds.
+- **One copy at a time:** a build registers `build/MLV Drive.app`, which competes with an installed
+  copy for the extension. Uninstall one (unregister it:
+  `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u <app>`)
+  and restart the Mac; or build with `-DMLVDRIVE_RELEASE_BUNDLE=ON` (not registered).
+- `tools/package-macos.sh` builds in `build-release` with that option, universal (arm64 +
+  x86_64), and makes the disk image (LZMA: about 11 MB).
 
 ### Testing
 
@@ -239,6 +315,7 @@ Mounts the folder with the test patterns and checks: each clip's frames read in 
 byte-identical to `mlvdrive_tool dng` (a sample, or every frame), each WAV identical to
 `mlvdrive_tool wav`, a chart, a watched scratch folder where clips are added, replaced and
 deleted, a rescan, the read speed, the unmount. PASS / FAIL per check; exit code: the failures.
+It needs the development app (Building) and, for clips in protected places, its Full Disk Access.
 
 ## Credits
 
