@@ -436,11 +436,28 @@ in Resolve.
        `mount`'s list); `umount` unmounts.
      - First read (probe defaults: async replies, 1 MB `ioSize`): 1000 files of 4 MB
        byte-correct, 233 files/s (~970 MB/s), one reader.
-   - **Open:** the sandboxed extension couldn't list the folder it was mounted from ("Operation
-     not permitted", not security-scoped): reading the MLV files is the question now
-     (`FSRequiresSecurityScopedPathURLResources`, a security-scoped URL from the app, entitlements).
-     Mount options given with `-o` didn't reach `loadResource`: the probe now logs where they
-     arrive (load, mount, activate).
+   - **Reading the MLV folders** (checked with the probe):
+     - The app sandbox alone can't read the folder mounted from. A read-only sandbox exception
+       (`com.apple.security.temporary-exception.files.absolute-path.read-only` = `/`, not a
+       restricted entitlement: ad hoc is fine) can, for ordinary folders.
+     - Desktop, Documents, removable and network volumes are also privacy-protected (TCC),
+       checked against the host app: an extension can't ask the user ("Refusing ... from
+       extension"), and the app's own Desktop permission (the user's Allow) is not passed on to
+       it. **Full Disk Access for the host app is**: with it the extension read the Desktop.
+       Setup for the user: turn the extension on once, give the app Full Disk Access once.
+     - The 26.5 SDK has no API to mount with a security-scoped URL (only `/sbin/mount`).
+   - **Mount options** (`-o key=value`) arrive at `activate`, not `loadResource`; settings read
+     after `loadResource` (`openCloseInhibited`) can't come from them.
+   - **Speed** (`macos/probe/run.sh sweep`, M4 Mac mini, 300 files of 4 MB, every one
+     byte-correct): one reader in order 928-1135 files/s first pass (3.9-4.7 GB/s), ~1250 again;
+     four readers 2374-2922 files/s (up to 12 GB/s). `ioSize` 256 KB a little slower than 1-4 MB;
+     replies from a worker queue as fast as on FSKit's thread for one reader, faster for four
+     (2786-2922 vs 2374-2521). FSKit is far from the limit: a 1080p 16-bit DNG stream at 24 fps
+     is ~100 MB/s; making the frames is what counts (a simulated 5 ms frame: 165 files/s, one
+     reader, no read-ahead). Metadata: ~21 getattr and 2 lookups a file (all answered at once).
+     QoS user-initiated vs utility: no difference on an idle machine.
+   - **Decided:** native FSKit, async replies, `ioSize` 1 MB, the extension reading the settings
+     file and the folders itself (Full Disk Access).
    - Reference: APFS on this Mac's SSD reads 4 MB files at ~2,000 MB/s (2.0 ms a file,
      `mlvdrive_tool read`, unbuffered: now `F_NOCACHE`, POSIX reads, outside Windows).
    - **Portability fixes in the core** (outside Windows these compiled but were wrong): dates were
@@ -451,12 +468,9 @@ in Resolve.
    - **Steps:**
      1. Portability fixes (above). Done: checked on two clips (RTCI and file dates right, folder
         dates their newest clip's), 16 GB RAM -> 4096 MB cache, the paths.
-     2. Probe (`macos/probe`, a throwaway module): runs (above); next the options, the folder
-        access, then `macos/probe/run.sh sweep`: a read-only FSKit volume of fake 4 MB files
-        made in memory. Measure files/s and MB/s reading in order (Windows: ~270 frames/s,
-        ~1.1 GB/s), with `ioSize` 256 KB-4 MB, worker QoS, open/close on and off; and check that
-        the sandboxed extension can read a second folder on another disk. Too slow: learnt
-        before the port.
+     2. Probe (`macos/probe`, a throwaway FSKit volume of fake 4 MB files made in memory).
+        Done (above): runs ad hoc, reads any folder with Full Disk Access, 4-12 GB/s. Not
+        measured: open / close calls (can't be switched by mount options).
      3. `src/fs/fskit_*`: the real volume on `vfs::Tree` and the frame cache; checked against
         `mlvdrive_tool dng` byte for byte, as the WinFsp mount was.
      4. Watcher (FSEvents; `statfs` `MNT_LOCAL` for the 30 s polling), unmount / rescan from the

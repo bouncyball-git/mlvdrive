@@ -17,6 +17,10 @@ Then, once:
    reopen System Settings, which lists modules as it found them when it opened.
 2. Turn it on: System Settings > General > Login Items & Extensions > File System Extensions >
    "MLV Drive Probe". (`pluginkit -e use` isn't enough: FSKit keeps its own list.)
+3. For protected folders (Desktop, Documents, external and network volumes): System Settings >
+   Privacy & Security > Full Disk Access > + > the app. The extension's reads are checked against
+   the app; a permission for one folder (the app's Allow prompt) isn't passed on, Full Disk
+   Access is.
 
 Measure:
 
