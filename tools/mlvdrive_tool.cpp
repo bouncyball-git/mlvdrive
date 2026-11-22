@@ -553,6 +553,8 @@ int writeWavFile(const Args& a) {
 
 int writePatterns(const Args& a) {
     if (a.positional.size() != 1) return usage();
+    std::error_code ec;
+    std::filesystem::create_directories(util::u8(a.positional[0]), ec);  // (a failure shows when writing)
     auto source = vfs::makeTestPatterns(true);
     const uint32_t each = source->frameCount() / vfs::kTestPatternCount;
     std::vector<uint8_t> bytes;
