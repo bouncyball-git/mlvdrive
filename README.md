@@ -21,7 +21,9 @@ Visual Studio 2022 (or its Build Tools) with the C++ tools, CMake and Ninja, and
 .\build.ps1 -pkg        # build, then both: what a release needs (also --pkg; clean -pkg from scratch)
 ```
 
-The version is set once, in `CMakeLists.txt` (`project(... VERSION ...)`). `tools/make_icons.py`
+The version is set once, in the `VERSION` file; CMake, `build.ps1`, `build.sh` and the installers
+all take it from there. For a release: change `VERSION`, commit, then tag that commit
+`v<version>` (packaging stops when the commit carries a tag of another version). `tools/make_icons.py`
 draws the icons in `assets/` (only needed to change them). The installer is
 `installer/mlvdrive.iss`.
 

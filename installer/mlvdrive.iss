@@ -1,5 +1,5 @@
 ; MLV Drive's installer (Inno Setup 6). Built by `.\build.ps1 setup`, which passes:
-;   /DAppVersion=0.9.1  /DStage=<build\stage>  /DRoot=<the project>  /DDist=<dist>
+;   /DAppVersion=<the VERSION file>  /DStage=<build\stage>  /DRoot=<the project>  /DDist=<dist>
 ;
 ; Default or custom installation: the tray app (GUI) and the command-line drive (CLI), at least
 ; one of them; mlvdrive_tool optional. Per user (no administrator rights) unless "for all users" is

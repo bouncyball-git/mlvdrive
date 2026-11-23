@@ -7,7 +7,24 @@
 # Built in build-release (not build: the development app there stays the one registered here).
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-VERSION=$(sed -n 's/^project(MLVDrive VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")
+# The version: the VERSION file, its one place (CMake reads it too); checked against git as
+# build.ps1 does: stops when this commit is tagged with another version (a tag made without bumping
+# VERSION), warns when VERSION has changes not committed (a release no commit has).
+VERSION=$(tr -d ' \r\n' < "$ROOT/VERSION")
+if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "VERSION: '$VERSION' isn't a version such as 1.2.3" >&2
+    exit 1
+fi
+if tags=$(git -C "$ROOT" tag --points-at HEAD --list 'v*' 2>/dev/null); then
+    for t in $tags; do
+        if [ "$t" != "v$VERSION" ]; then
+            echo "this commit is tagged $t but VERSION says $VERSION: bump VERSION, commit, and tag that commit" >&2
+            exit 1
+        fi
+    done
+    git -C "$ROOT" diff --quiet HEAD -- VERSION ||
+        echo "warning: VERSION ($VERSION) has changes not committed: commit it before tagging the release" >&2
+fi
 BUILD="$ROOT/build-release"
 DIST="$ROOT/dist"
 STAGE="$BUILD/dmg"

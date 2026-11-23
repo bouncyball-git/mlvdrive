@@ -43,11 +43,25 @@ function Run {
     if ($LASTEXITCODE -ne 0) { throw "failed (exit code $LASTEXITCODE): $($args -join ' ')" }
 }
 
-# The version CMakeLists.txt gives the project.
+# The version: the VERSION file, its one place (CMake reads it too). For the release files, also
+# checked against git: stops when this commit is tagged with another version (a tag made without
+# bumping VERSION), warns when VERSION has changes not committed (a release no commit has).
+$script:VersionChecked = $false
 function Get-Version {
-    $m = Select-String -Path (Join-Path $Root 'CMakeLists.txt') -Pattern 'project\(\S+ VERSION ([0-9.]+)'
-    if (-not $m) { throw 'no project version in CMakeLists.txt' }
-    $m.Matches[0].Groups[1].Value
+    $v = (Get-Content -Raw (Join-Path $Root 'VERSION')).Trim()
+    if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "VERSION: '$v' isn't a version such as 1.2.3" }
+    if (-not $script:VersionChecked -and (Get-Command git -ErrorAction SilentlyContinue)) {
+        $script:VersionChecked = $true
+        $tags = @(git -C $Root tag --points-at HEAD --list 'v*' 2>$null)
+        if ($LASTEXITCODE -eq 0) {  # not a git checkout otherwise
+            foreach ($t in $tags) {
+                if ($t -ne "v$v") { throw "this commit is tagged $t but VERSION says ${v}: bump VERSION, commit, and tag that commit" }
+            }
+            git -C $Root diff --quiet HEAD -- VERSION 2>$null
+            if ($LASTEXITCODE -ne 0) { Write-Warning "VERSION ($v) has changes not committed: commit it before tagging the release" }
+        }
+    }
+    $v
 }
 
 # What gets installed or released, gathered in build\stage: the programs, the README and LICENSE,
@@ -123,8 +137,8 @@ foreach ($action in $Actions) {
             & (Join-Path $Root 'tools\install.ps1') -Uninstall
         }
         'package' {
+            $version = Get-Version  # checked first
             $stage = New-Stage
-            $version = Get-Version
             $dist = Join-Path $Root 'dist'
             New-Item -ItemType Directory -Force $dist | Out-Null
             $zip = Join-Path $dist "MLVDrive-$version-win64.zip"
@@ -140,8 +154,8 @@ foreach ($action in $Actions) {
             Step ("package: {0} ({1:N1} MB)" -f $zip, ((Get-Item $zip).Length / 1MB))
         }
         'setup' {
+            $version = Get-Version  # checked first
             $stage = New-Stage
-            $version = Get-Version
             $iscc = @((Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
                       (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
                       (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe')) |

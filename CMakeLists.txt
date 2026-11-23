@@ -3,9 +3,17 @@ cmake_minimum_required(VERSION 3.18)
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "26.0" CACHE STRING "Minimum macOS version")
 endif()
-project(MLVDrive VERSION 0.9.1 LANGUAGES C CXX)
-# The version everywhere: the programs, the DNG Software tag, the tray app's resources and the
-# release zip's name (build.ps1 reads it from the line above).
+# The version: the VERSION file, its one place (bumped there only). From it: the programs, the DNG
+# Software tag, the tray app's resources, the macOS bundle, and (build.ps1, tools/package-macos.sh)
+# the release files' names.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MLVDRIVE_VERSION_STRING LIMIT_COUNT 1)
+string(STRIP "${MLVDRIVE_VERSION_STRING}" MLVDRIVE_VERSION_STRING)
+if(NOT MLVDRIVE_VERSION_STRING MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "VERSION: '${MLVDRIVE_VERSION_STRING}' isn't a version such as 1.2.3")
+endif()
+project(MLVDrive VERSION ${MLVDRIVE_VERSION_STRING} LANGUAGES C CXX)
+# A changed VERSION configures again (a plain cmake --build picks it up).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 add_compile_definitions(MLVDRIVE_VERSION="${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 17)
