@@ -289,7 +289,7 @@ in Resolve.
      from the unpacked zip over a running copy, started, `M:` back with every frame checked.
      Version 0.2.0 since; 0.7.0 (new icon), 0.8.0 (the review passes: LJ92 hardened and fuzzed,
      fixes and clean-up), 0.9.0 (macOS: the FSKit drive, MLV Drive.app, the DMG; NEON stripe
-     correction; see milestone 8).
+     correction; see milestone 8), 0.9.1 (no bundled pixel maps; build.sh for macOS).
    - Installer (0.2.0): `installer/mlvdrive.iss`, `build.ps1 setup` ->
      `dist\MLVDrive-<version>-setup.exe` (2.5 MB; Inno Setup 6). Types Default (tray app +
      command-line drive) and Custom (gui / cli / tool components; at least one of gui and cli,

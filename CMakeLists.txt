@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.18)
 if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "26.0" CACHE STRING "Minimum macOS version")
 endif()
-project(MLVDrive VERSION 0.9.0 LANGUAGES C CXX)
+project(MLVDrive VERSION 0.9.1 LANGUAGES C CXX)
 # The version everywhere: the programs, the DNG Software tag, the tray app's resources and the
 # release zip's name (build.ps1 reads it from the line above).
 add_compile_definitions(MLVDRIVE_VERSION="${PROJECT_VERSION}")
